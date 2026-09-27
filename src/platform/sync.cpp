@@ -99,7 +99,9 @@ bool Semaphore::waitFor(uint32_t milliseconds)
 
 void Semaphore::post(int count)
 {
-    sceKernelSignalSema(m_id, count);
+    int result = sceKernelSignalSema(m_id, count);
+    if (result < 0)
+        logError("sceKernelSignalSema failed: 0x%08x", result);
 }
 
 Thread::Thread(const char* name, Entry entry, void* argument, int priority, uint32_t stackSize, int cpuMask)

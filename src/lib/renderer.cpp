@@ -33,6 +33,11 @@ void Renderer::setVideoMode(x86::reg32 w, x86::reg32 h, x86::reg32 bpp)
     m_height = h;
     m_depth = bpp;
     pf::logInfo("video mode %ux%u %u bpp", w, h, bpp);
+#ifdef NFS3_DEBUG_INSTALLWIN
+    // Parsed install.win table: 40 slots of 128 bytes at guest 0x7a2634.
+    for (x86::reg32 i = 0; i < 26; ++i)
+        pf::logInfo("install.win[%u] = '%s'", i, &m_application->getMemory<char>(0x7a2634 + i * 128));
+#endif
 }
 
 void Renderer::updatePalette(x86::reg32 colorCount, const x86::reg32* colors)

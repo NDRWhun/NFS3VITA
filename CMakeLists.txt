@@ -22,8 +22,9 @@ set(VITA_APP_NAME "NFS3VITA")
 set(VITA_TITLEID  "NFS3VITA1")
 set(VITA_VERSION  "00.01")
 
-option(NFS3_LOG_DEBUG   "Verbose runtime logging" OFF)
-option(NFS3_ASSERT_SOFT "Log failed assertions instead of trapping" OFF)
+option(NFS3_LOG_DEBUG        "Verbose runtime logging" OFF)
+option(NFS3_ASSERT_SOFT      "Log failed assertions instead of trapping" OFF)
+option(NFS3_DEBUG_INSTALLWIN "Log the parsed install.win table at video mode set" OFF)
 
 include(cmake/nfs3_shaders.cmake)
 include(cmake/nfs3_sources.cmake)
@@ -47,12 +48,17 @@ set(NFS3_COMMON_FLAGS
   -ffunction-sections -fdata-sections
   -Wall -Wextra
 )
+# Generated code only sees the stable defines; debug switches stay in the runtime to avoid full rebuilds.
 set(NFS3_DEFINES VITA __vita__ WITH_MMX)
+set(NFS3_RUNTIME_DEFINES ${NFS3_DEFINES})
 if(NFS3_LOG_DEBUG)
-  list(APPEND NFS3_DEFINES NFS3_LOG_DEBUG)
+  list(APPEND NFS3_RUNTIME_DEFINES NFS3_LOG_DEBUG)
 endif()
 if(NFS3_ASSERT_SOFT)
-  list(APPEND NFS3_DEFINES NFS3_ASSERT_SOFT)
+  list(APPEND NFS3_RUNTIME_DEFINES NFS3_ASSERT_SOFT)
+endif()
+if(NFS3_DEBUG_INSTALLWIN)
+  list(APPEND NFS3_RUNTIME_DEFINES NFS3_DEBUG_INSTALLWIN)
 endif()
 
 set(NFS3_INCLUDES
@@ -70,12 +76,12 @@ target_include_directories(nfs3_game PRIVATE ${NFS3_INCLUDES})
 # Runtime and Vita backend.
 add_library(nfs3_runtime OBJECT ${NFS3_RUNTIME_SOURCES} ${NFS3_SHADER_SOURCES})
 target_compile_options(nfs3_runtime PRIVATE ${NFS3_COMMON_FLAGS} -O3)
-target_compile_definitions(nfs3_runtime PRIVATE ${NFS3_DEFINES})
+target_compile_definitions(nfs3_runtime PRIVATE ${NFS3_RUNTIME_DEFINES})
 target_include_directories(nfs3_runtime PRIVATE ${NFS3_INCLUDES})
 
 add_executable(NFS3VITA.elf src/nfs3hp/nfs3hp_main.cpp $<TARGET_OBJECTS:nfs3_game> $<TARGET_OBJECTS:nfs3_runtime>)
 target_compile_options(NFS3VITA.elf PRIVATE ${NFS3_COMMON_FLAGS} -O2)
-target_compile_definitions(NFS3VITA.elf PRIVATE ${NFS3_DEFINES})
+target_compile_definitions(NFS3VITA.elf PRIVATE ${NFS3_RUNTIME_DEFINES})
 target_include_directories(NFS3VITA.elf PRIVATE ${NFS3_INCLUDES})
 target_link_options(NFS3VITA.elf PRIVATE -Wl,--gc-sections)
 target_link_libraries(NFS3VITA.elf

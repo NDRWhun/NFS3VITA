@@ -8,42 +8,91 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <vector>
 
 namespace win32
 {
 
-static std::string s_currentDirectory = "c:\\nfs2se\\";
+// Guest current directory: "X:\" plus components, always ending in a backslash.
+static std::string s_currentDirectory = "C:\\";
 static std::string s_dataDirectory = "ux0:data/nfs3vita/";
 static std::string s_cdDirectory = "ux0:data/nfs3vita/";
 
-static std::string moveToRoot(const std::string& path)
+static bool isSeparator(char c)
+{
+    return c == '\\' || c == '/';
+}
+
+// Resolves "." and ".." in a guest path that starts with "X:"; keeps a trailing backslash.
+static std::string normalizeGuestDirectory(const std::string& path)
+{
+    std::string result = path.substr(0, 2);
+    result[0] = char(toupper(result[0]));
+    std::vector<std::string> parts;
+    std::string::size_type start = 2;
+    while (start <= path.size())
+    {
+        std::string::size_type end = start;
+        while (end < path.size() && !isSeparator(path[end]))
+            end++;
+        std::string part = path.substr(start, end - start);
+        if (part == "..")
+        {
+            if (!parts.empty())
+                parts.pop_back();
+        }
+        else if (!part.empty() && part != ".")
+        {
+            parts.push_back(part);
+        }
+        start = end + 1;
+    }
+    for (std::vector<std::string>::const_iterator it = parts.begin(); it != parts.end(); ++it)
+        result += "\\" + *it;
+    result += "\\";
+    return result;
+}
+
+// Makes a guest path absolute ("X:\...") using the current directory.
+static std::string absoluteGuestPath(const std::string& path)
 {
     if (path.size() >= 2 && path[1] == ':')
-    {
-        /* Absolute Win32 path (e.g. D:\DATA\...) - map to CD directory */
-        if (path.size() >= 3 && path[2] == '\\')
-            return s_cdDirectory + std::string(path.begin() + 3, path.end());
-        else
-            return s_cdDirectory + std::string(path.begin() + 2, path.end());
-    }
-    else if (path == "nul")
+        return path;
+    if (!path.empty() && isSeparator(path[0]))
+        return s_currentDirectory.substr(0, 2) + path;
+    return s_currentDirectory + path;
+}
+
+// Guest path -> host path. Drive-letter paths land in the data (or CD) directory.
+static std::string moveToRoot(const std::string& path)
+{
+    if (path == "nul")
     {
         /* No null device on the Vita: use a scratch file */
         return s_dataDirectory + "nul.tmp";
     }
-    else
-    {
-        /* Relative path - map to local install directory */
-        return s_dataDirectory + path;
-    }
+    std::string full = absoluteGuestPath(path);
+    std::string rest = full.substr(2);
+    while (!rest.empty() && isSeparator(rest[0]))
+        rest.erase(0, 1);
+    const std::string& root = (toupper(full[0]) == 'D') ? s_cdDirectory : s_dataDirectory;
+    return root + rest;
 }
 
-// Lower-cases and converts separators; the Vita filesystem is case-insensitive.
-static std::string normalizePath(std::string path)
+// Lower-cases, converts separators and collapses repeats; the Vita filesystem is case-insensitive.
+static std::string normalizePath(const std::string& input)
 {
-    std::transform(path.begin(), path.end(), path.begin(), ::tolower);
-    for (std::string::iterator it = path.begin(); it != path.end(); ++it)
-        if (*it == '\\') *it = '/';
+    std::string path;
+    path.reserve(input.size());
+    for (std::string::const_iterator it = input.begin(); it != input.end(); ++it)
+    {
+        char c = char(tolower(*it));
+        if (c == '\\')
+            c = '/';
+        if (c == '/' && !path.empty() && path.back() == '/')
+            continue;
+        path += c;
+    }
     return path;
 }
 
@@ -264,16 +313,29 @@ x86::reg32 File::size() const
     return x86::reg32(buffer.st_size);
 }
 
+// Win32 form: no trailing backslash except for a drive root.
 const std::string& File::getCurrentDirectory()
 {
-    return s_currentDirectory;
+    static std::string result;
+    result = s_currentDirectory;
+    if (result.size() > 3)
+        result.pop_back();
+    return result;
 }
 
 void File::setCurrentDirectory(const char* path)
 {
-    s_currentDirectory = path;
-    if (s_currentDirectory.back() != '\\')
-        s_currentDirectory.append("\\");
+    std::string directory = normalizeGuestDirectory(absoluteGuestPath(path));
+    std::string host = normalizePath(moveToRoot(directory));
+    struct stat buffer;
+    memset(&buffer, 0, sizeof(buffer));
+    if (stat(host.c_str(), &buffer) != 0 || !S_ISDIR(buffer.st_mode))
+    {
+        pf::logError("SetCurrentDirectory %s: not found (%s)", path, host.c_str());
+        return;
+    }
+    s_currentDirectory = directory;
+    pf::logDebug("current directory %s", s_currentDirectory.c_str());
 }
 
 void File::setDataDirectory(const char* path)

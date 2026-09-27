@@ -528,9 +528,20 @@ DWORD GetFullPathNameA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(nBufferLength);
     x86::reg32 lpBufferAddress = app->getMemory<x86::reg32>(cpu.esp + 12);
     NFS2_ASSERT(&app->getMemory<char>(lpBufferAddress) == lpBuffer);
-    strcpy(lpBuffer, "C:\\nfs2se\\");
-    *lpFilePart = lpBufferAddress + static_cast<x86::reg32>(strlen(lpBuffer));
-    strcat(lpBuffer, lpFileName);
+    // Absolute names pass through; relative names are rooted in the guest current directory.
+    if (strlen(lpFileName) >= 2 && lpFileName[1] == ':')
+    {
+        strcpy(lpBuffer, lpFileName);
+    }
+    else
+    {
+        strcpy(lpBuffer, File::getCurrentDirectory().c_str());
+        if (lpBuffer[strlen(lpBuffer) - 1] != '\\')
+            strcat(lpBuffer, "\\");
+        strcat(lpBuffer, lpFileName);
+    }
+    const char* lastSeparator = strrchr(lpBuffer, '\\');
+    *lpFilePart = lpBufferAddress + static_cast<x86::reg32>(lastSeparator ? lastSeparator + 1 - lpBuffer : 0);
     return static_cast<DWORD>(strlen(lpBuffer));
 }
 
@@ -1066,6 +1077,7 @@ BOOL SetCurrentDirectoryA(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
+    pf::logDebug("SetCurrentDirectory %s", lpPathName);
     File::setCurrentDirectory(lpPathName);
     return 1;
 }

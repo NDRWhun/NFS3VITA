@@ -7,6 +7,7 @@
 #include <psp2/power.h>
 #include <psp2/kernel/processmgr.h>
 #include <sys/stat.h>
+#include <cstdio>
 
 // Process parameters picked up by the VitaSDK runtime.
 extern "C" {
@@ -16,6 +17,74 @@ unsigned int sceUserMainThreadStackSize  = 4 * 1024 * 1024;
 
 static const char* s_dataDirectory = "ux0:data/nfs3vita/";
 static const char* s_logFile = "ux0:data/nfs3vita/nfs3vita.log";
+static const char* s_installWin = "ux0:data/nfs3vita/install.win";
+
+// The retail installer wrote install.win; the game refuses to start without it.
+// One path per line (index = meaning, all read by nfs3.exe):
+//  0 language        1 "remote" flag   2 temp dir       3 tracks          4 unused
+//  5 carmodel        6 render/pc       7 dashhud        8 audio/pc        9 audio/sfx
+// 10-14 speech per language (english german french spanish italian)
+// 15 fedata/art     16 fedata/text    17 fedata/text   18 fedata/save    19 fedata/stats
+// 20 fedata/config  21 unused         22 art/slides    23 art/track      24 art/showcase
+// 25 fedata/movies
+// Drive-letter paths resolve to the data directory.
+static void ensureInstallWin()
+{
+    struct stat st;
+    if (stat(s_installWin, &st) == 0)
+        return;
+    static const char content[] =
+        "english\r\n"
+        "local\r\n"
+        "C:\\\r\n"
+        "C:\\gamedata\\tracks\\\r\n"
+        "C:\\\r\n"
+        "C:\\gamedata\\carmodel\\\r\n"
+        "C:\\gamedata\\render\\pc\\\r\n"
+        "C:\\gamedata\\dashhud\\\r\n"
+        "C:\\gamedata\\audio\\pc\\\r\n"
+        "C:\\gamedata\\audio\\sfx\\\r\n"
+        "C:\\gamedata\\audio\\speech\\english\\\r\n"
+        "C:\\gamedata\\audio\\speech\\english\\\r\n"
+        "C:\\gamedata\\audio\\speech\\english\\\r\n"
+        "C:\\gamedata\\audio\\speech\\english\\\r\n"
+        "C:\\gamedata\\audio\\speech\\english\\\r\n"
+        "C:\\fedata\\art\\\r\n"
+        "C:\\fedata\\text\\\r\n"
+        "C:\\fedata\\text\\\r\n"
+        "C:\\fedata\\save\\\r\n"
+        "C:\\fedata\\stats\\\r\n"
+        "C:\\fedata\\config\\\r\n"
+        "C:\\\r\n"
+        "C:\\fedata\\art\\slides\\\r\n"
+        "C:\\fedata\\art\\track\\\r\n"
+        "C:\\fedata\\art\\showcase\\\r\n"
+        "C:\\fedata\\movies\\\r\n";
+    FILE* file = fopen(s_installWin, "wb");
+    if (!file)
+    {
+        pf::logError("cannot create %s", s_installWin);
+        return;
+    }
+    fwrite(content, 1, sizeof(content) - 1, file);
+    fclose(file);
+    pf::logInfo("created default %s", s_installWin);
+}
+
+// The CD check probes "<drive>:NFS3.EXE"; drive paths resolve to the data directory.
+static void ensureCdMarker()
+{
+    static const char* marker = "ux0:data/nfs3vita/nfs3.exe";
+    struct stat st;
+    if (stat(marker, &st) == 0)
+        return;
+    FILE* file = fopen(marker, "wb");
+    if (file)
+    {
+        fclose(file);
+        pf::logInfo("created CD marker %s", marker);
+    }
+}
 
 int main(int, char**)
 {
@@ -26,10 +95,13 @@ int main(int, char**)
 
     mkdir("ux0:data", 0777);
     mkdir("ux0:data/nfs3vita", 0777);
+    mkdir("ux0:data/nfs3vita/carspecs", 0777); // player car setups written by the game
     pf::logInit(s_logFile);
     pf::logInfo("NFS3VITA starting");
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    ensureInstallWin();
+    ensureCdMarker();
     if (!pf::gxm::Device::get().init())
         pf::fatal("graphics initialisation failed");
 

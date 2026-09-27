@@ -206,7 +206,7 @@ struct Device::Impl
     bool                    frameAcquired = false;
     uint32_t                nextFrameIndex = 1;
     Semaphore               freeSlots{"nfs3_gxm_free", FrameSlots, FrameSlots};
-    Semaphore               readySlots{"nfs3_gxm_ready", 0, FrameSlots};
+    Semaphore               readySlots{"nfs3_gxm_ready", 0, FrameSlots + 1}; // +1: shutdown wake-up
 
     // Render thread
     Thread*                 thread = nullptr;
