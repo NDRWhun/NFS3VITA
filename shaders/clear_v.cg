@@ -1,0 +1,6 @@
+// Fullscreen quad at far depth, used to clear color and depth.
+
+void main(float2 aPosition, float4 out vPosition : POSITION)
+{
+    vPosition = float4(aPosition, 1.0, 1.0);
+}

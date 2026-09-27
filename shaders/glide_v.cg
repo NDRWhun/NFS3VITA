@@ -1,0 +1,25 @@
+// Glide triangle vertex program.
+// Positions arrive in Glide screen pixels with z = ooz (0..65535).
+
+void main(
+    float3 aPosition,
+    float4 aColor,
+    float2 aTexCoord,
+    float4 aCombine,
+    float4 aAtlasInfo,
+    uniform float4 uViewport,          // x,y: NDC scale; z,w: NDC offset
+    float4 out vPosition : POSITION,
+    float3 out vTexCoord : TEXCOORD0,
+    float4 out vColor    : COLOR0,
+    float4 out vCombine  : TEXCOORD1,
+    float4 out vAtlasInfo: TEXCOORD2)
+{
+    vTexCoord = float3(aTexCoord, aCombine.w);
+    vCombine = aCombine;
+    vColor = aColor;
+    vAtlasInfo = aAtlasInfo;
+    vPosition = float4(aPosition.x * uViewport.x + uViewport.z,
+                       aPosition.y * uViewport.y + uViewport.w,
+                       aPosition.z * (1.0 / 65536.0),
+                       1.0);
+}

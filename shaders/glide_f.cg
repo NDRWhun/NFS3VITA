@@ -1,0 +1,32 @@
+// Glide triangle fragment program: atlas lookup with wrap emulation and 4-tap smoothing.
+
+float4 getColor(sampler2D atlas, float2 coords, float4 atlasInfo)
+{
+    float2 texCoords = (atlasInfo.zw + clamp(coords, 0.0, atlasInfo.y - 1.0)) / atlasInfo.x;
+    return tex2D(atlas, texCoords);
+}
+
+float4 main(
+    float3 vTexCoord : TEXCOORD0,
+    float4 vColor    : COLOR0,
+    float4 vCombine  : TEXCOORD1,
+    float4 vAtlasInfo: TEXCOORD2,
+    uniform sampler2D uTexture) : COLOR
+{
+    float2 texelPos = (vTexCoord.xy / vTexCoord.z) * vAtlasInfo.y / 256.0;
+    float2 p1 = texelPos + float2(-0.25, -0.25);
+    float2 p2 = texelPos + float2( 0.25, -0.25);
+    float2 p3 = texelPos + float2(-0.25,  0.25);
+    float2 p4 = texelPos + float2( 0.25,  0.25);
+    float2 tex1 = lerp(clamp(p1, 0.0, vAtlasInfo.y), fmod(p1, vAtlasInfo.y), vCombine.z);
+    float2 tex2 = lerp(clamp(p2, 0.0, vAtlasInfo.y), fmod(p2, vAtlasInfo.y), vCombine.z);
+    float2 tex3 = lerp(clamp(p3, 0.0, vAtlasInfo.y), fmod(p3, vAtlasInfo.y), vCombine.z);
+    float2 tex4 = lerp(clamp(p4, 0.0, vAtlasInfo.y), fmod(p4, vAtlasInfo.y), vCombine.z);
+    float4 c1 = lerp(getColor(uTexture, tex1, vAtlasInfo), getColor(uTexture, tex2, vAtlasInfo), 0.5);
+    float4 c2 = lerp(getColor(uTexture, tex3, vAtlasInfo), getColor(uTexture, tex4, vAtlasInfo), 0.5);
+    float4 textureColor = lerp(c1, c2, 0.5);
+    float4 color = float4(lerp(vColor.rgb, vColor.rgb * textureColor.rgb, vCombine.x),
+                          lerp(vColor.a, vColor.a * textureColor.a, vCombine.y));
+    clip(color.a - 0.0625);
+    return color;
+}

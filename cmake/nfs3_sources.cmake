@@ -1,0 +1,64 @@
+# Hand-written runtime sources. The generated game code is globbed separately.
+
+set(NFS3_PLATFORM_SOURCES
+  src/platform/log.cpp
+  src/platform/time.cpp
+  src/platform/sync.cpp
+  src/platform/msgqueue.cpp
+  src/platform/gxm/gxm_device.cpp
+)
+
+set(NFS3_LIB_SOURCES
+  src/lib/audio.cpp
+  src/lib/cpu.cpp
+  src/lib/event.cpp
+  src/lib/file.cpp
+  src/lib/gamepad.cpp
+  src/lib/gliderenderer.cpp
+  src/lib/glidetmu.cpp
+  src/lib/library.cpp
+  src/lib/memmap.cpp
+  src/lib/mutex.cpp
+  src/lib/palette.cpp
+  src/lib/process.cpp
+  src/lib/registry.cpp
+  src/lib/renderer.cpp
+  src/lib/socket.cpp
+  src/lib/surface.cpp
+  src/lib/thread.cpp
+  src/lib/timer.cpp
+  src/lib/winapp.cpp
+  src/lib/window.cpp
+)
+
+set(NFS3_WINAPI_SOURCES
+  src/lib/winapi/advapi32.cpp
+  src/lib/winapi/com.cpp
+  src/lib/winapi/ddraw.cpp
+  src/lib/winapi/dinput.cpp
+  src/lib/winapi/dsetup.cpp
+  src/lib/winapi/dsound.cpp
+  src/lib/winapi/gdi32.cpp
+  src/lib/winapi/glide2x.cpp
+  src/lib/winapi/kernel32.cpp
+  src/lib/winapi/ole32.cpp
+  src/lib/winapi/shell32.cpp
+  src/lib/winapi/user32.cpp
+  src/lib/winapi/version.cpp
+  src/lib/winapi/winmm.cpp
+  src/lib/winapi/wsock32.cpp
+  src/lib/winapi/ddraw/idirectdraw2.cpp
+  src/lib/winapi/ddraw/idirectdrawpalette.cpp
+  src/lib/winapi/ddraw/idirectdrawsurface.cpp
+  src/lib/winapi/dinput/idirectinput2.cpp
+  src/lib/winapi/dinput/idirectinputdevice.cpp
+  src/lib/winapi/dsound/idirectsound.cpp
+  src/lib/winapi/dsound/idirectsound3dlistener.cpp
+  src/lib/winapi/dsound/idirectsoundbuffer.cpp
+)
+
+set(NFS3_RUNTIME_SOURCES
+  ${NFS3_PLATFORM_SOURCES}
+  ${NFS3_LIB_SOURCES}
+  ${NFS3_WINAPI_SOURCES}
+)

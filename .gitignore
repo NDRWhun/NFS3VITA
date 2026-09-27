@@ -1,0 +1,27 @@
+# Build output
+/build*/
+*.velf
+*.self
+*.vpk
+*.elf
+*.gxp
+param.sfo
+
+# Generated code imported from the upstream recompilation (tools/import-upstream.ps1)
+/src/nfs3hp/disassembly/
+
+# Original game binaries and data are never tracked
+*.exe
+*.dll
+*.EXE
+*.DLL
+
+# Local environment
+tools/env.local.ps1
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+__pycache__/

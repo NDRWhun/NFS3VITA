@@ -1,0 +1,4 @@
+# Upstream static recompilation this port is built from.
+repository = https://github.com/motor-dev/nfs-recompiled
+commit = 77ebdb3b6a21925ccfc4fc4c1d712abec3e1945a
+date = 2026-03-04

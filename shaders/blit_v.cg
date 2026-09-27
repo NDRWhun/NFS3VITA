@@ -1,0 +1,11 @@
+// Textured quad in NDC, used to present the DirectDraw framebuffer.
+
+void main(
+    float2 aPosition,
+    float2 aTexCoord,
+    float4 out vPosition : POSITION,
+    float2 out vTexCoord : TEXCOORD0)
+{
+    vPosition = float4(aPosition, 0.5, 1.0);
+    vTexCoord = aTexCoord;
+}

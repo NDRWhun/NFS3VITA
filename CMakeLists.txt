@@ -1,0 +1,103 @@
+# NFS3VITA - Need for Speed III: Hot Pursuit (static recompilation) -> PS Vita. ELF -> SELF -> VPK.
+cmake_minimum_required(VERSION 3.16)
+
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+  if(DEFINED ENV{VITASDK})
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{VITASDK}/share/vita.toolchain.cmake" CACHE PATH "toolchain file")
+  else()
+    message(FATAL_ERROR "Define the VITASDK environment variable (point at your VitaSDK root).")
+  endif()
+endif()
+
+project(NFS3VITA C CXX)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# GNU mode keeps newlib's POSIX declarations (ftruncate, strcasecmp) visible.
+set(CMAKE_CXX_EXTENSIONS ON)
+
+include("${VITASDK}/share/vita.cmake" REQUIRED)
+
+set(VITA_APP_NAME "NFS3VITA")
+set(VITA_TITLEID  "NFS3VITA1")
+set(VITA_VERSION  "00.01")
+
+option(NFS3_LOG_DEBUG   "Verbose runtime logging" OFF)
+option(NFS3_ASSERT_SOFT "Log failed assertions instead of trapping" OFF)
+
+include(cmake/nfs3_shaders.cmake)
+include(cmake/nfs3_sources.cmake)
+
+set(NFS3_SHADER_SOURCES "")
+nfs3_add_shader(NFS3_SHADER_SOURCES glide_v sce_vp_psp2)
+nfs3_add_shader(NFS3_SHADER_SOURCES glide_f sce_fp_psp2)
+nfs3_add_shader(NFS3_SHADER_SOURCES blit_v  sce_vp_psp2)
+nfs3_add_shader(NFS3_SHADER_SOURCES blit_f  sce_fp_psp2)
+nfs3_add_shader(NFS3_SHADER_SOURCES clear_v sce_vp_psp2)
+nfs3_add_shader(NFS3_SHADER_SOURCES clear_f sce_fp_psp2)
+
+file(GLOB NFS3_DISASM_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/nfs3hp/disassembly/*.cpp")
+if(NOT NFS3_DISASM_SOURCES)
+  message(FATAL_ERROR "src/nfs3hp/disassembly is empty; run tools/import-upstream.ps1 first.")
+endif()
+
+set(NFS3_COMMON_FLAGS
+  -march=armv7-a -mtune=cortex-a9 -mfpu=neon -mfloat-abi=hard
+  -fno-exceptions -fno-asynchronous-unwind-tables -fno-unwind-tables
+  -ffunction-sections -fdata-sections
+  -Wall -Wextra
+)
+set(NFS3_DEFINES VITA __vita__ WITH_MMX)
+if(NFS3_LOG_DEBUG)
+  list(APPEND NFS3_DEFINES NFS3_LOG_DEBUG)
+endif()
+if(NFS3_ASSERT_SOFT)
+  list(APPEND NFS3_DEFINES NFS3_ASSERT_SOFT)
+endif()
+
+set(NFS3_INCLUDES
+  ${CMAKE_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/src/nfs3hp
+  ${CMAKE_SOURCE_DIR}/src/nfs3hp/disassembly
+)
+
+# Generated game code: large, optimise for size and compile time.
+add_library(nfs3_game OBJECT ${NFS3_DISASM_SOURCES})
+target_compile_options(nfs3_game PRIVATE ${NFS3_COMMON_FLAGS} -O2 -Wno-unused-label -Wno-unused-variable -Wno-unused-parameter)
+target_compile_definitions(nfs3_game PRIVATE ${NFS3_DEFINES})
+target_include_directories(nfs3_game PRIVATE ${NFS3_INCLUDES})
+
+# Runtime and Vita backend.
+add_library(nfs3_runtime OBJECT ${NFS3_RUNTIME_SOURCES} ${NFS3_SHADER_SOURCES})
+target_compile_options(nfs3_runtime PRIVATE ${NFS3_COMMON_FLAGS} -O3)
+target_compile_definitions(nfs3_runtime PRIVATE ${NFS3_DEFINES})
+target_include_directories(nfs3_runtime PRIVATE ${NFS3_INCLUDES})
+
+add_executable(NFS3VITA.elf src/nfs3hp/nfs3hp_main.cpp $<TARGET_OBJECTS:nfs3_game> $<TARGET_OBJECTS:nfs3_runtime>)
+target_compile_options(NFS3VITA.elf PRIVATE ${NFS3_COMMON_FLAGS} -O2)
+target_compile_definitions(NFS3VITA.elf PRIVATE ${NFS3_DEFINES})
+target_include_directories(NFS3VITA.elf PRIVATE ${NFS3_INCLUDES})
+target_link_options(NFS3VITA.elf PRIVATE -Wl,--gc-sections)
+target_link_libraries(NFS3VITA.elf
+  stdc++
+  SceGxm_stub
+  SceDisplay_stub
+  SceCtrl_stub
+  SceAudio_stub
+  ScePower_stub
+  SceRtc_stub
+  SceLibKernel_stub
+  SceKernelThreadMgr_stub
+  SceSysmem_stub
+  SceProcessmgr_stub
+  c
+  m
+)
+
+vita_create_self(NFS3VITA.self NFS3VITA.elf UNSAFE)
+
+set(VITA_MKSFOEX_FLAGS "-d ATTRIBUTE2=12")
+vita_create_vpk(NFS3VITA.vpk ${VITA_TITLEID} NFS3VITA.self
+  VERSION ${VITA_VERSION}
+  NAME ${VITA_APP_NAME}
+)
