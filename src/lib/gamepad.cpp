@@ -92,7 +92,9 @@ static const KeyCode& buttonKey(x86::reg32 button)
 {
     switch (button)
     {
+    case PadCross:
     case PadStart:  return s_keyEnter;
+    case PadCircle:
     case PadSelect: return s_keyEscape;
     default:        return s_keySpace;
     }

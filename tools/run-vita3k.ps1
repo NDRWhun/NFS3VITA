@@ -14,17 +14,27 @@ public struct RECT { public int Left, Top, Right, Bottom; }
 public class Vita3kWin {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 }
 '@
 Add-Type -AssemblyName System.Drawing
+
+# Brings a window to the front and confirms it, since SetForegroundWindow can be refused.
+function Focus-Window($handle) {
+    for ($try = 0; $try -lt 5; $try++) {
+        [Vita3kWin]::SetForegroundWindow($handle) | Out-Null
+        Start-Sleep -Milliseconds 300
+        if ([Vita3kWin]::GetForegroundWindow() -eq $handle) { return $true }
+    }
+    return $false
+}
 
 # Captures the emulator window only while it shows the game (title starts with the app name).
 function Save-GameWindow($process, $path) {
     $process.Refresh()
     if ($process.MainWindowTitle -notlike 'NFS3VITA*') { Write-Host "no game window ($($process.MainWindowTitle))"; return }
     $handle = $process.MainWindowHandle
-    [Vita3kWin]::SetForegroundWindow($handle) | Out-Null
-    Start-Sleep -Milliseconds 500
+    if (-not (Focus-Window $handle)) { Write-Host 'emulator window not in front, skipping capture'; return }
     $rect = New-Object RECT
     [Vita3kWin]::GetWindowRect($handle, [ref]$rect) | Out-Null
     $w = $rect.Right - $rect.Left; $h = $rect.Bottom - $rect.Top
