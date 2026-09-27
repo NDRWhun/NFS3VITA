@@ -22,6 +22,7 @@ private:
     Mutex(const Mutex&) = delete;
     Mutex& operator=(const Mutex&) = delete;
     SceUID m_id;
+    char   m_name[32]; // kept for error messages
 };
 
 class LockGuard

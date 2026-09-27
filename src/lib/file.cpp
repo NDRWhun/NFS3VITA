@@ -66,11 +66,14 @@ static std::string absoluteGuestPath(const std::string& path)
 // Guest path -> host path. Drive-letter paths land in the data (or CD) directory.
 static std::string moveToRoot(const std::string& path)
 {
-    if (path == "nul")
-    {
-        /* No null device on the Vita: use a scratch file */
+    std::string device = path;
+    for (size_t i = 0; i < device.size(); ++i)
+        device[i] = char(tolower(device[i]));
+    // No null device on the Vita: use a scratch file. Console output goes to the debug tty.
+    if (device == "nul" || device == "conin$")
         return s_dataDirectory + "nul.tmp";
-    }
+    if (device == "conout$")
+        return "tty0:";
     std::string full = absoluteGuestPath(path);
     std::string rest = full.substr(2);
     while (!rest.empty() && isSeparator(rest[0]))
@@ -244,6 +247,9 @@ File::File(const char* path, x86::reg32 mode, x86::reg32 flags, x86::reg32 creat
     default:
         NFS2_ASSERT(false);
     }
+    // The scratch file standing in for the null device may not exist yet.
+    if (m_filename == s_dataDirectory + "nul.tmp")
+        openFlags |= O_CREAT;
 
     m_file = open(m_filename.c_str(), openFlags, 0664);
     if (m_file == -1)

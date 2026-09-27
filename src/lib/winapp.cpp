@@ -3,6 +3,7 @@
 #include <lib/event.h>
 #include <lib/library.h>
 #include <lib/registry.h>
+#include <lib/thread.h>
 #include <lib/timer.h>
 #include <winapi/types.h>
 #include <x86.h>
@@ -12,6 +13,7 @@
 #include <winapi/glide2x.h>
 #include <algorithm>
 #include <atomic>
+#include <vector>
 
 namespace win32
 {
@@ -81,16 +83,29 @@ WinApplication::~WinApplication()
 {
     delete m_appNameW;
     delete m_appName;
+    // Timer callbacks and guest threads stop first so no guest code runs while resources are freed.
+    Timer::fini();
+    std::vector<Thread*> threads;
     m_resourceContext->lock();
-    for (std::map<x86::reg32, GenericResource*>::const_iterator it = m_resources.begin();
-        it != m_resources.end();
-        it = m_resources.erase(it))
+    for (std::map<x86::reg32, GenericResource*>::const_iterator it = m_resources.begin(); it != m_resources.end(); ++it)
     {
-        it->second->setResourceIndex(0);
-        delete it->second;
+        if (Thread* thread = dynamic_cast<Thread*>(it->second))
+            threads.push_back(thread);
     }
     m_resourceContext->unlock();
-    Timer::fini();
+    for (std::vector<Thread*>::iterator it = threads.begin(); it != threads.end(); ++it)
+        (*it)->terminate();
+    // Highest handles first: later objects depend on earlier ones (sound buffers on their device).
+    m_resourceContext->lock();
+    while (!m_resources.empty())
+    {
+        std::map<x86::reg32, GenericResource*>::iterator it = --m_resources.end();
+        GenericResource* resource = it->second;
+        m_resources.erase(it);
+        resource->setResourceIndex(0);
+        delete resource;
+    }
+    m_resourceContext->unlock();
     Event::fini();
     MemMap::fini();
     delete m_resourceContext;

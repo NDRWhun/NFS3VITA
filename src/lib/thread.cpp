@@ -52,59 +52,57 @@ static void unregisterCurrentThread()
     }
 }
 
-Thread::Data::Data(WinApplication* app, x86::reg32 entryPoint, x86::reg32 parameter, x86::reg32 flags)
-    :   m_app(app)
+Thread::Shared::Shared(WinApplication* app, x86::reg32 entryPoint, x86::reg32 parameter, x86::reg32 flags)
+    :   m_refCount(1)
+    ,   m_app(app)
     ,   m_entryPoint(entryPoint)
     ,   m_parameter(parameter)
     ,   m_flags(flags)
     ,   m_threadId(1 + s_threadCount.fetch_add(1))
-{
-}
-
-Thread::Thread()
-    :   m_refCount(new std::atomic<int>(1))
     ,   m_semaphore(nullptr)
-    ,   m_data(nullptr, 0, 0, 0)
     ,   m_thread(nullptr)
     ,   m_cpu{}
 {
 }
 
-Thread::Thread(const Thread& other)
-    :   m_refCount(other.m_refCount)
-    ,   m_semaphore(other.m_semaphore)
-    ,   m_data(nullptr, 0, 0, 0)
-    ,   m_thread(other.m_thread)
-    ,   m_cpu{}
+Thread::Shared::~Shared()
 {
-    m_refCount->fetch_add(1);
+    delete m_thread;
+    delete m_semaphore;
+}
+
+// Handle without a host thread (GetCurrentThread).
+Thread::Thread()
+    :   m_shared(new Shared(nullptr, 0, 0, 0))
+{
+}
+
+Thread::Thread(const Thread& other)
+    :   m_shared(other.m_shared)
+{
+    m_shared->m_refCount.fetch_add(1);
 }
 
 Thread::Thread(WinApplication *app, x86::reg32 method, x86::reg32 parameter, x86::reg32 flags)
-    :   m_refCount(new std::atomic<int>(1))
-    ,   m_semaphore(new pf::Semaphore("nfs3_thread_start", (flags & 0x4) ? 0 : 1))
-    ,   m_data(app, method, parameter, flags)
-    ,   m_thread(new pf::Thread("nfs3_guest", &run, this, pf::Thread::PriorityNormal, s_hostStackSize, pf::Thread::CpuAll))
-    ,   m_cpu{}
+    :   m_shared(new Shared(app, method, parameter, flags))
 {
-    m_thread->start();
+    m_shared->m_semaphore = new pf::Semaphore("nfs3_thread_start", (flags & 0x4) ? 0 : 1);
+    m_shared->m_thread = new pf::Thread("nfs3_guest", &run, m_shared, pf::Thread::PriorityNormal, s_hostStackSize, pf::Thread::CpuAll);
+    m_shared->m_thread->start();
 }
 
 Thread::~Thread()
 {
-    if (m_refCount->fetch_sub(1) == 1)
+    if (m_shared->m_refCount.fetch_sub(1) == 1)
     {
-        delete m_refCount;
-        if (m_thread)
-        {
-            terminate();
-        }
+        terminate();
+        delete m_shared;
     }
 }
 
 void Thread::resume()
 {
-    m_semaphore->post();
+    m_shared->m_semaphore->post();
 }
 
 x86::reg32 Thread::currentThreadId()
@@ -119,22 +117,25 @@ x86::reg32 Thread::currentThreadId()
     return 1;
 }
 
+// Stops the guest thread and waits for it; a second call or a handle-only object is a no-op.
 void Thread::terminate()
 {
-    m_cpu.terminate = true;
+    if (!m_shared->m_thread)
+        return;
+    m_shared->m_cpu.terminate = true;
     Event::broadcastTerminate();
-    pf::logDebug("Waiting for thread 0x%x", m_data.m_threadId);
+    pf::logDebug("Waiting for thread 0x%x", m_shared->m_threadId);
     Window::wake();
-    m_thread->join();
-    delete m_thread;
-    m_thread = nullptr;
-    delete m_semaphore;
-    m_semaphore = nullptr;
+    m_shared->m_thread->join();
+    delete m_shared->m_thread;
+    m_shared->m_thread = nullptr;
+    delete m_shared->m_semaphore;
+    m_shared->m_semaphore = nullptr;
 }
 
 x86::reg32 Thread::threadId() const
 {
-    return m_data.m_threadId;
+    return m_shared->m_threadId;
 }
 
 void Thread::sleep(x86::reg32 milliseconds)
@@ -144,10 +145,10 @@ void Thread::sleep(x86::reg32 milliseconds)
 
 int Thread::run(void* data)
 {
-    Thread* thread = static_cast<Thread*>(data);
-    registerCurrentThread(thread->m_data.m_threadId);
-    thread->m_semaphore->wait();
-    int result = thread->m_data.m_app->runThread(thread->m_cpu, thread->m_data.m_entryPoint, thread->m_data.m_parameter);
+    Shared* shared = static_cast<Shared*>(data);
+    registerCurrentThread(shared->m_threadId);
+    shared->m_semaphore->wait();
+    int result = shared->m_app->runThread(shared->m_cpu, shared->m_entryPoint, shared->m_parameter);
     unregisterCurrentThread();
     return result;
 }

@@ -237,6 +237,9 @@ static inline regmmx from_reg64(const x86::reg64& value)
     return result;
 }
 
+// Logs any intrinsic whose result differs from SSE2 semantics.
+void mmxSelfTest();
+
 struct MMX
 {
     regmmx mm0;

@@ -5,6 +5,7 @@
 #include <winapi/wrapper.h>
 #include <lib/window.h>
 #include <lib/renderer.h>
+#include <platform/log.h>
 
 
 namespace win32 { namespace ddraw
@@ -143,8 +144,11 @@ HRESULT IDirectDraw2::CreateSurface(WinApplication* app, x86::CPU& cpu,
                                     DDSURFACEDESC* lpSurfaceDesc, x86::reg32* lpDirectDrawSurface, LPUNKNOWN pUnkOuter)
 {
     NFS2_USE(cpu);
-    NFS2_USE(lpSurfaceDesc);
     NFS2_ASSERT(pUnkOuter == nullptr);
+    pf::logDebug("CreateSurface flags 0x%x caps 0x%x %ux%u backbuffers %u pf flags 0x%x bits %u masks %08x %08x %08x",
+                lpSurfaceDesc->dwFlags, lpSurfaceDesc->ddsCaps.dwCaps, lpSurfaceDesc->dwWidth, lpSurfaceDesc->dwHeight,
+                lpSurfaceDesc->dwBackBufferCount, lpSurfaceDesc->ddpfPixelFormat.dwFlags, lpSurfaceDesc->ddpfPixelFormat.dwRGBBitCount,
+                lpSurfaceDesc->ddpfPixelFormat.dwRBitMask, lpSurfaceDesc->ddpfPixelFormat.dwGBitMask, lpSurfaceDesc->ddpfPixelFormat.dwBBitMask);
     *lpDirectDrawSurface = com::ComAlloc(app);
     IDirectDrawSurface* mem = &app->getMemory<IDirectDrawSurface>(*lpDirectDrawSurface);
     new (mem) IDirectDrawSurface(app, &app->getMemory<DDSURFACEDESC>(g_currentDisplayMode),

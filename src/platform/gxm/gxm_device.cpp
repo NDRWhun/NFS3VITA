@@ -31,6 +31,8 @@ const uint32_t FramebufferBytes     = MaxSourceWidth * MaxSourceHeight * 2;
 const uint32_t PaletteBytes         = 256 * 4;
 const SceUID   InvalidUid           = -1;
 
+static bool s_framebufferBgr = false; // 565 texture swizzle for Vita3K, see Device::setFramebuffer16Bgr
+
 struct DisplayData
 {
     void*       address;
@@ -577,7 +579,9 @@ void Device::Impl::renderFrame(Frame& frame)
     if (frame.kind == FrameFramebuffer16 || frame.kind == FrameFramebuffer8)
     {
         SceGxmTexture texture;
-        SceGxmTextureFormat format = frame.kind == FrameFramebuffer16 ? SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB : SCE_GXM_TEXTURE_FORMAT_P8_ABGR;
+        SceGxmTextureFormat format = SCE_GXM_TEXTURE_FORMAT_P8_ABGR;
+        if (frame.kind == FrameFramebuffer16)
+            format = s_framebufferBgr ? SCE_GXM_TEXTURE_FORMAT_U5U6U5_BGR : SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB;
         sceGxmTextureInitLinear(&texture, frame.framebuffer, format, frame.sourceWidth, frame.sourceHeight, 1);
         if (frame.kind == FrameFramebuffer8)
             sceGxmTextureSetPalette(&texture, frame.palette);
@@ -808,6 +812,11 @@ void Device::submitFrame()
 uint32_t Device::completedFrameIndex() const
 {
     return s_completedFrameIndex.load();
+}
+
+void Device::setFramebuffer16Bgr(bool bgr)
+{
+    s_framebufferBgr = bgr;
 }
 
 uint32_t Device::recordingFrameIndex() const

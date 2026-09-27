@@ -2,6 +2,7 @@
 #include <platform/log.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/error.h>
+#include <cstring>
 
 namespace pf
 {
@@ -9,6 +10,8 @@ namespace pf
 Mutex::Mutex(const char* name, bool recursive)
     :   m_id(sceKernelCreateMutex(name, recursive ? SCE_KERNEL_MUTEX_ATTR_RECURSIVE : 0, 0, nullptr))
 {
+    strncpy(m_name, name, sizeof(m_name) - 1);
+    m_name[sizeof(m_name) - 1] = 0;
     if (m_id < 0)
         fatal("sceKernelCreateMutex(%s) failed: 0x%08x", name, m_id);
 }
@@ -16,20 +19,21 @@ Mutex::Mutex(const char* name, bool recursive)
 Mutex::~Mutex()
 {
     sceKernelDeleteMutex(m_id);
+    m_id = -1;
 }
 
 void Mutex::lock()
 {
     int result = sceKernelLockMutex(m_id, 1, nullptr);
     if (result < 0)
-        logError("sceKernelLockMutex failed: 0x%08x", result);
+        logError("sceKernelLockMutex(%s) failed: 0x%08x", m_name, result);
 }
 
 void Mutex::unlock()
 {
     int result = sceKernelUnlockMutex(m_id, 1);
     if (result < 0)
-        logError("sceKernelUnlockMutex failed: 0x%08x", result);
+        logError("sceKernelUnlockMutex(%s) failed: 0x%08x", m_name, result);
 }
 
 bool Mutex::tryLock()

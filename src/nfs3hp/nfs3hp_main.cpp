@@ -1,7 +1,10 @@
 #include <lib/file.h>
+#include <lib/inputscript.h>
 #include <lib/registry.h>
+#include <platform/config.h>
 #include <platform/gxm.h>
 #include <platform/log.h>
+#include <mmx.h>
 #include <nfs3hp.h>
 #include <psp2/ctrl.h>
 #include <psp2/power.h>
@@ -98,10 +101,14 @@ int main(int, char**)
     mkdir("ux0:data/nfs3vita/carspecs", 0777); // player car setups written by the game
     pf::logInit(s_logFile);
     pf::logInfo("NFS3VITA starting");
+    x86::mmxSelfTest();
+    pf::Config::load("ux0:data/nfs3vita/nfs3vita.cfg");
+    win32::InputScript::load("ux0:data/nfs3vita/autoinput.txt");
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
     ensureInstallWin();
     ensureCdMarker();
+    pf::gxm::Device::get().setFramebuffer16Bgr(pf::Config::getBool("vita3k_bgr565", false));
     if (!pf::gxm::Device::get().init())
         pf::fatal("graphics initialisation failed");
 

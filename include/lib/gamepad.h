@@ -51,6 +51,8 @@ public:
     GamepadState getState() const;
     // Turns pad changes into keyboard messages while the game is not polling DirectInput.
     static void updateKeys();
+    // Posts a key by name (up down left right enter escape space); unknown names are ignored.
+    static void pushNamedKey(const char* name, bool down);
 };
 
 }

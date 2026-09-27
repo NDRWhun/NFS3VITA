@@ -84,6 +84,8 @@ public:
     uint32_t recordingFrameIndex() const;
 
     void setStretch(bool stretch) { m_stretch = stretch; }
+    // Vita3K reads the 565 swizzle the other way round; hardware wants RGB.
+    void setFramebuffer16Bgr(bool bgr);
     Rect viewport() const;
 
 private:

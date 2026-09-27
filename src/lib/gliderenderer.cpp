@@ -53,6 +53,12 @@ pf::gxm::Frame& GlideRenderer::frame()
     }
     if (current->kind != pf::gxm::FrameGlide)
     {
+        static bool s_logged = false;
+        if (!s_logged)
+        {
+            pf::logInfo("first glide frame");
+            s_logged = true;
+        }
         current->kind = pf::gxm::FrameGlide;
         current->vblanks = 1;
         current->sourceWidth = m_renderer->m_width;

@@ -150,7 +150,8 @@ Timer::~Timer()
 
 void Timer::cancel()
 {
-    s_service->remove(this);
+    if (s_service)
+        s_service->remove(this);
 }
 
 }

@@ -5,9 +5,36 @@
 #include <platform/gxm.h>
 #include <platform/log.h>
 #include <cstring>
+#ifdef NFS3_DEBUG_FRAMEDUMP
+#include <cstdio>
+#include <sys/stat.h>
+#endif
 
 namespace win32
 {
+
+#ifdef NFS3_DEBUG_FRAMEDUMP
+// Writes every 16th presented 16-bit frame (120 of them, after NFS3_DEBUG_FRAMEDUMP_SKIP presents)
+// as raw 565 for offline colour checks.
+#ifndef NFS3_DEBUG_FRAMEDUMP_SKIP
+#define NFS3_DEBUG_FRAMEDUMP_SKIP 0
+#endif
+static void dumpFrame(const void* pixels, x86::reg32 bytes)
+{
+    static x86::reg32 presented = 0;
+    static x86::reg32 written = 0;
+    if (presented++ < NFS3_DEBUG_FRAMEDUMP_SKIP || presented % 16 != 0 || written >= 120)
+        return;
+    mkdir("ux0:data/nfs3vita/dump", 0777);
+    char path[80];
+    snprintf(path, sizeof(path), "ux0:data/nfs3vita/dump/frame_%03u.raw", written++);
+    FILE* file = fopen(path, "wb");
+    if (!file)
+        return;
+    fwrite(pixels, 1, bytes, file);
+    fclose(file);
+}
+#endif
 
 Renderer::Renderer(WinApplication* application, Window *window)
     :   m_application(application)
@@ -83,6 +110,9 @@ void Renderer::update(x86::reg32 vblanks)
     if (m_depth == 16)
     {
         memcpy(frame.framebuffer, source, m_width * m_height * 2);
+#ifdef NFS3_DEBUG_FRAMEDUMP
+        dumpFrame(source, m_width * m_height * 2);
+#endif
     }
     else
     {

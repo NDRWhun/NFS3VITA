@@ -1,10 +1,12 @@
 # Hand-written runtime sources. The generated game code is globbed separately.
 
 set(NFS3_PLATFORM_SOURCES
+  src/platform/config.cpp
   src/platform/log.cpp
   src/platform/time.cpp
   src/platform/sync.cpp
   src/platform/msgqueue.cpp
+  src/platform/mmx_selftest.cpp
   src/platform/gxm/gxm_device.cpp
 )
 
@@ -16,6 +18,7 @@ set(NFS3_LIB_SOURCES
   src/lib/gamepad.cpp
   src/lib/gliderenderer.cpp
   src/lib/glidetmu.cpp
+  src/lib/inputscript.cpp
   src/lib/library.cpp
   src/lib/memmap.cpp
   src/lib/mutex.cpp

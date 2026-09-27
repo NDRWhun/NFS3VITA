@@ -14,6 +14,7 @@ namespace win32
 {
 
 // Guest thread: runs recompiled code on its own host thread and virtual CPU.
+// Handles created by GetCurrentThread/DuplicateHandle share the same thread state.
 class Thread : public GenericResource
 {
 public:
@@ -37,21 +38,23 @@ private:
     static int run(void* parameter);
 
 private:
-    struct Data
+    struct Shared
     {
-        Data(WinApplication* app, x86::reg32 entryPoint, x86::reg32 parameter, x86::reg32 flags);
-        WinApplication* m_app;
-        x86::reg32      m_entryPoint;
-        x86::reg32      m_parameter;
-        x86::reg32      m_flags;
-        x86::reg32      m_threadId;
+        Shared(WinApplication* app, x86::reg32 entryPoint, x86::reg32 parameter, x86::reg32 flags);
+        ~Shared();
+
+        std::atomic<int> m_refCount;
+        WinApplication*  m_app;
+        x86::reg32       m_entryPoint;
+        x86::reg32       m_parameter;
+        x86::reg32       m_flags;
+        x86::reg32       m_threadId;
+        pf::Semaphore*   m_semaphore;
+        pf::Thread*      m_thread;
+        x86::CPU         m_cpu;
     };
 
-    std::atomic<int>*   m_refCount;
-    pf::Semaphore*      m_semaphore;
-    Data                m_data;
-    pf::Thread*         m_thread;
-    x86::CPU            m_cpu;
+    Shared* m_shared;
 };
 
 }

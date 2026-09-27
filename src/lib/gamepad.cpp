@@ -1,4 +1,5 @@
 #include <lib/gamepad.h>
+#include <lib/inputscript.h>
 #include <lib/window.h>
 #include <psp2/ctrl.h>
 #include <cstring>
@@ -117,8 +118,25 @@ void Input::poll()
     s_kbPoll = 3;
 }
 
+void Gamepad::pushNamedKey(const char* name, bool down)
+{
+    static const struct { const char* name; const KeyCode* key; } s_names[] = {
+        { "enter", &s_keyEnter }, { "escape", &s_keyEscape }, { "space", &s_keySpace },
+        { "left", &s_keyLeft }, { "up", &s_keyUp }, { "right", &s_keyRight }, { "down", &s_keyDown },
+    };
+    for (const auto& entry : s_names)
+    {
+        if (strcmp(entry.name, name) == 0)
+        {
+            Window::pushKey(entry.key->vk, entry.key->scancode, down, down ? entry.key->character : 0);
+            return;
+        }
+    }
+}
+
 void Gamepad::updateKeys()
 {
+    InputScript::update();
     if (s_kbPoll == 0)
     {
         GamepadState state = readPad();

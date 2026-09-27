@@ -1,11 +1,14 @@
 # Installs and/or runs the VPK in Vita3K, then prints the tail of both logs.
 # Usage: tools\run-vita3k.ps1 [-Install] [-TimeoutSec N] [-Vpk path] [-ScreenshotAt 30,60 -ScreenshotDir dir]
+#                             [-AutoInput script.txt]
+# -AutoInput copies a "<ms> <key>" script to the data dir for the game to replay (see lib/inputscript.h).
 param(
     [switch]$Install,
     [int]$TimeoutSec = 0,
     [string]$Vpk = (Join-Path $PSScriptRoot '..\build-release\NFS3VITA.vpk'),
     [int[]]$ScreenshotAt = @(),
-    [string]$ScreenshotDir = (Join-Path $PSScriptRoot '..\build-release\shots')
+    [string]$ScreenshotDir = (Join-Path $PSScriptRoot '..\build-release\shots'),
+    [string]$AutoInput = ''
 )
 
 Add-Type -TypeDefinition @'
@@ -54,9 +57,19 @@ $titleId = 'NFS3VITA1'
 $local = Join-Path $PSScriptRoot 'env.local.ps1'
 if (Test-Path $local) { . $local }
 
-$gameLog = Join-Path $pref 'ux0\data\nfs3vita\nfs3vita.log'
+$dataDir = Join-Path $pref 'ux0\data\nfs3vita'
+$gameLog = Join-Path $dataDir 'nfs3vita.log'
 $emuLog = Join-Path (Split-Path $vita3k) 'vita3k.log'
 if (Test-Path $gameLog) { Remove-Item $gameLog -Force }
+
+# Vita3K reads the 565 texture swizzle the other way round than hardware; the game has a switch for it.
+$config = Join-Path $dataDir 'nfs3vita.cfg'
+if (-not (Test-Path $config)) { Set-Content -Path $config -Value "vita3k_bgr565=1" -Encoding ascii }
+
+# A stale input script would replay into every run, so it only exists when asked for.
+$autoInputTarget = Join-Path $dataDir 'autoinput.txt'
+if (Test-Path $autoInputTarget) { Remove-Item $autoInputTarget -Force }
+if ($AutoInput) { Copy-Item $AutoInput $autoInputTarget }
 
 # Install by copying the SELF over the installed eboot: the VPK path form asks before overwriting.
 if ($Install) {

@@ -25,6 +25,7 @@ set(VITA_VERSION  "00.01")
 option(NFS3_LOG_DEBUG        "Verbose runtime logging" OFF)
 option(NFS3_ASSERT_SOFT      "Log failed assertions instead of trapping" OFF)
 option(NFS3_DEBUG_INSTALLWIN "Log the parsed install.win table at video mode set" OFF)
+option(NFS3_DEBUG_FRAMEDUMP  "Write presented 16-bit frames as raw 565 files to ux0:data/nfs3vita/dump" OFF)
 
 include(cmake/nfs3_shaders.cmake)
 include(cmake/nfs3_sources.cmake)
@@ -59,6 +60,10 @@ if(NFS3_ASSERT_SOFT)
 endif()
 if(NFS3_DEBUG_INSTALLWIN)
   list(APPEND NFS3_RUNTIME_DEFINES NFS3_DEBUG_INSTALLWIN)
+endif()
+if(NFS3_DEBUG_FRAMEDUMP)
+  set(NFS3_DEBUG_FRAMEDUMP_SKIP 0 CACHE STRING "Presents to skip before dumping frames")
+  list(APPEND NFS3_RUNTIME_DEFINES NFS3_DEBUG_FRAMEDUMP NFS3_DEBUG_FRAMEDUMP_SKIP=${NFS3_DEBUG_FRAMEDUMP_SKIP})
 endif()
 
 set(NFS3_INCLUDES
