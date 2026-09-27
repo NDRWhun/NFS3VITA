@@ -11,9 +11,10 @@
 namespace pf
 {
 
-static int      s_logFile = -1;
-static SceUID   s_logMutex = -1;
+static const char* s_logPath = nullptr;
+static SceUID      s_logMutex = -1;
 
+// Each line is appended with its own open/close so nothing is lost if the process dies.
 static void writeLine(const char* level, const char* fmt, va_list args)
 {
     char buffer[1024];
@@ -30,8 +31,15 @@ static void writeLine(const char* level, const char* fmt, va_list args)
     if (s_logMutex >= 0)
         sceKernelLockMutex(s_logMutex, 1, nullptr);
     sceClibPrintf("%s", buffer);
-    if (s_logFile >= 0)
-        write(s_logFile, buffer, len);
+    if (s_logPath)
+    {
+        int file = open(s_logPath, O_WRONLY | O_CREAT | O_APPEND, 0666);
+        if (file >= 0)
+        {
+            write(file, buffer, len);
+            close(file);
+        }
+    }
     if (s_logMutex >= 0)
         sceKernelUnlockMutex(s_logMutex, 1);
 }
@@ -39,17 +47,18 @@ static void writeLine(const char* level, const char* fmt, va_list args)
 void logInit(const char* logFilePath)
 {
     s_logMutex = sceKernelCreateMutex("nfs3_log", 0, 0, nullptr);
-    if (logFilePath)
-        s_logFile = open(logFilePath, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    s_logPath = logFilePath;
+    if (s_logPath)
+    {
+        int file = open(s_logPath, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (file >= 0)
+            close(file);
+    }
 }
 
 void logShutdown()
 {
-    if (s_logFile >= 0)
-    {
-        close(s_logFile);
-        s_logFile = -1;
-    }
+    s_logPath = nullptr;
     if (s_logMutex >= 0)
     {
         sceKernelDeleteMutex(s_logMutex);
