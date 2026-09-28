@@ -14,7 +14,7 @@ enum
     AtlasSize       = 2048,
     MaxSourceWidth  = 1024,     // largest Glide resolution (grSstWinOpen)
     MaxSourceHeight = 768,
-    FrameSlots      = 2
+    FrameSlots      = 3
 };
 
 // Glide triangle vertex as consumed by glide_v.cg (56 bytes).
@@ -75,6 +75,8 @@ public:
     void shutdown();
 
     // Game thread: frames are acquired, filled, then submitted; at most FrameSlots in flight.
+    // acquireFrame() waits until the render thread and the GPU are done with the next slot, so callers
+    // release the execution lock around it; it returns the acquired frame again until submitFrame().
     Frame& acquireFrame();
     Frame* currentFrame();
     void submitFrame();

@@ -4,15 +4,18 @@ set(NFS3_PLATFORM_SOURCES
   src/platform/config.cpp
   src/platform/ime.cpp
   src/platform/log.cpp
+  src/platform/perf.cpp
   src/platform/time.cpp
   src/platform/sync.cpp
   src/platform/msgqueue.cpp
   src/platform/mmx_selftest.cpp
+  src/platform/fpu_selftest.cpp
   src/platform/gxm/gxm_device.cpp
 )
 
 set(NFS3_LIB_SOURCES
   src/lib/audio.cpp
+  src/lib/controls.cpp
   src/lib/cpu.cpp
   src/lib/event.cpp
   src/lib/file.cpp
@@ -29,6 +32,7 @@ set(NFS3_LIB_SOURCES
   src/lib/renderer.cpp
   src/lib/socket.cpp
   src/lib/surface.cpp
+  src/lib/textfield.cpp
   src/lib/thread.cpp
   src/lib/timer.cpp
   src/lib/winapp.cpp

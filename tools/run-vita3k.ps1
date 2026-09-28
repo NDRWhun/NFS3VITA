@@ -12,42 +12,50 @@ param(
 )
 
 Add-Type -TypeDefinition @'
-using System; using System.Runtime.InteropServices;
+using System; using System.Text; using System.Runtime.InteropServices;
 public struct RECT { public int Left, Top, Right, Bottom; }
 public class Vita3kWin {
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    public delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+
+    // Visible top-level window of the process whose title starts with the prefix, or zero.
+    public static IntPtr Find(uint pid, string prefix) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, l) => {
+            uint owner; GetWindowThreadProcessId(h, out owner);
+            if (owner != pid || !IsWindowVisible(h)) return true;
+            StringBuilder title = new StringBuilder(256);
+            GetWindowText(h, title, title.Capacity);
+            if (!title.ToString().StartsWith(prefix)) return true;
+            found = h; return false;
+        }, IntPtr.Zero);
+        return found;
+    }
 }
 '@
 Add-Type -AssemblyName System.Drawing
 
-# Brings a window to the front and confirms it, since SetForegroundWindow can be refused.
-function Focus-Window($handle) {
-    for ($try = 0; $try -lt 5; $try++) {
-        [Vita3kWin]::SetForegroundWindow($handle) | Out-Null
-        Start-Sleep -Milliseconds 300
-        if ([Vita3kWin]::GetForegroundWindow() -eq $handle) { return $true }
-    }
-    return $false
-}
-
-# Captures the emulator window; notes when its title does not name the game.
+# Captures the game window's client area without bringing it to the front (PrintWindow, full content).
 function Save-GameWindow($process, $path) {
-    $process.Refresh()
-    if ($process.MainWindowTitle -notlike 'NFS3VITA*') { Write-Host "window title '$($process.MainWindowTitle)' at $path" }
-    $handle = $process.MainWindowHandle
-    if (-not (Focus-Window $handle)) { Write-Host 'emulator window not in front, skipping capture'; return }
+    $handle = [Vita3kWin]::Find([uint32]$process.Id, 'NFS3VITA')
+    if ($handle -eq [IntPtr]::Zero) { Write-Host "no game window at $path"; return }
     $rect = New-Object RECT
-    [Vita3kWin]::GetWindowRect($handle, [ref]$rect) | Out-Null
+    [Vita3kWin]::GetClientRect($handle, [ref]$rect) | Out-Null
     $w = $rect.Right - $rect.Left; $h = $rect.Bottom - $rect.Top
-    if ($w -le 0 -or $h -le 0) { return }
+    if ($w -le 0 -or $h -le 0) { Write-Host "game window minimized at $path"; return }
     $bitmap = New-Object System.Drawing.Bitmap $w, $h
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
-    $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+    $hdc = $graphics.GetHdc()
+    $ok = [Vita3kWin]::PrintWindow($handle, $hdc, 3)   # PW_CLIENTONLY | PW_RENDERFULLCONTENT
+    $graphics.ReleaseHdc($hdc)
+    if ($ok) { $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); Write-Host "screenshot $path" }
+    else { Write-Host "capture failed at $path" }
     $graphics.Dispose(); $bitmap.Dispose()
-    Write-Host "screenshot $path"
 }
 
 $ErrorActionPreference = 'Stop'

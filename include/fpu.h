@@ -319,6 +319,51 @@ namespace x86
     typedef double Float;
 #endif
 
+    // libm rounding to an integral double; mode is the x87 RC field (0 nearest, 1 down, 2 up, 3 toward zero).
+    [[gnu::cold, gnu::noinline]] inline double roundIntegralLibm(double value, reg32 mode)
+    {
+        switch (mode)
+        {
+        case 0:  return nearbyint(value);
+        case 1:  return floor(value);
+        case 2:  return ceil(value);
+        default: return trunc(value);
+        }
+    }
+
+    // Bit-identical to roundIntegralLibm. Needs FPSCR round-to-nearest; independent of flush-to-zero.
+    // NaN, infinities and |value| >= 2^31 (2^52 for mode 0) take the libm path.
+    inline double roundIntegral(double value, reg32 mode)
+    {
+        const double magnitude = fabs(value);
+        if (mode == 0)
+        {
+            // Adding 2^52 leaves no fraction bits, so the FPU rounds half to even.
+            if (__builtin_expect(magnitude < 0x1p52, 1))
+                return copysign((magnitude + 0x1p52) - 0x1p52, value);
+        }
+        else if (__builtin_expect(magnitude < 0x1p31, 1))
+        {
+            const bool negative = std::signbit(value);
+            double result = copysign(double(sreg32(value)), value);
+            // Down for negatives and up for positives move a fractional value away from zero.
+            if (mode == (negative ? 1u : 2u))
+            {
+                // Bit compare instead of ==, which would treat a flushed denormal as integral.
+                uint64_t valueBits, resultBits;
+                memcpy(&valueBits, &value, sizeof(valueBits));
+                memcpy(&resultBits, &result, sizeof(resultBits));
+                if (valueBits != resultBits)
+                    result += negative ? -1.0 : 1.0;
+            }
+            return result;
+        }
+        return roundIntegralLibm(value, mode);
+    }
+
+    // Compares roundIntegral with libm on edge cases and a pseudo-random sweep; logs mismatches.
+    void fpuSelfTest();
+
     struct FPU
     {
         union
@@ -572,7 +617,7 @@ namespace x86
 #endif
             return result;
 #else
-            return val1 * ::pow(2, ::trunc(val2));
+            return val1 * ::pow(2, roundIntegral(val2, 3));
 #endif
         }
 
@@ -602,20 +647,7 @@ namespace x86
 #endif
             return result;
 #else
-            switch (control.rc)
-            {
-            case 0:
-                return Float(nearbyint(double(st(0))));
-            case 1:
-                return Float(floor(double(st(0))));
-            case 2:
-                return Float(ceil(double(st(0))));
-            case 3:
-                return Float(trunc(double(st(0))));
-            default:
-                NFS2_ASSERT(false);
-                return Float(trunc(double(st(0))));
-            }
+            return Float(roundIntegral(double(st(0)), control.rc));
 #endif
         }
     };

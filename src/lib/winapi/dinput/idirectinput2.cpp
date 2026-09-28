@@ -1,6 +1,7 @@
 #include <winapi/dinput/idirectinput2.h>
 #include <winapi/dinput/idirectinputdevice.h>
 #include <winapi/wrapper.h>
+#include <lib/controls.h>
 #include <lib/gamepad.h>
 
 
@@ -74,13 +75,13 @@ HRESULT IDirectInput2::EnumDevices(WinApplication* app, x86::CPU& cpu,
         device->dwSize = sizeof(DIDEVICEINSTANCE);
         for (x86::reg16 deviceIndex = 0; deviceIndex < Gamepad::getCount(); ++deviceIndex)
         {
-            device->dwDevType = dwDevType;
+            device->dwDevType = controls::JoystickDeviceType;
             device->guidInstance = s_joystickGUID;
             device->guidInstance.Data3 = deviceIndex;
             device->guidProduct = s_joystickGUID;
             device->guidProduct.Data3 = 0x1f1f;
-            strcpy(device->tszInstanceName, "NFS Gamepad");
-            strcpy(device->tszProductName, "NFS Gamepad");
+            strcpy(device->tszInstanceName, controls::JoystickName);
+            strcpy(device->tszProductName, controls::JoystickName);
             device->guidFFDriver = s_driverGUID;
             device->wUsagePage = 0;
             device->wUsage = 0;

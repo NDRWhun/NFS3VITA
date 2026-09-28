@@ -34,6 +34,7 @@ private: // friend class GlideRenderer
     void present();
 
 private:
+    void submit();
     void update(x86::reg32 vblanks);
     x86::reg32 getFrontBuffer() const;
     x86::reg32 getBackBuffer() const;

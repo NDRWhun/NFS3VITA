@@ -5,6 +5,7 @@
 #include <lib/gliderenderer.h>
 #include <lib/window.h>
 #include <platform/log.h>
+#include <platform/perf.h>
 #include <cmath>
 
 
@@ -577,7 +578,11 @@ static void grBufferSwap(WinApplication* app, x86::CPU& cpu, x86::reg32 swapInte
     NFS2_ASSERT(swapInterval == 1);
     app->unlockContext(cpu);
     s_glideRenderer->swap();
+    const bool timed = pf::perf::enabled();
+    const uint32_t start = timed ? pf::perf::now() : 0;
     app->lockContext(cpu);
+    if (timed)
+        pf::perf::add(pf::perf::GilWait, pf::perf::now() - start);
 }
 
 static void grSstIsBusy(WinApplication* app, x86::CPU& cpu)
@@ -782,11 +787,11 @@ static x86::reg32 grLfbLock(WinApplication* app, x86::CPU& cpu, GrLock_t type, G
 
 static x86::reg32 grLfbUnlock(WinApplication* app, x86::CPU& cpu, GrLock_t type, GrBuffer_t buffer)
 {
-    NFS2_USE(app);
-    NFS2_USE(cpu);
     if (type == GR_LFB_WRITE_ONLY)
     {
+        app->unlockContext(cpu);
         s_renderer->unlock(buffer);
+        app->lockContext(cpu);
         return 1;
     }
     else

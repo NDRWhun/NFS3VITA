@@ -3,6 +3,7 @@
 #include <lib/gamepad.h>
 #include <lib/gliderenderer.h>
 #include <lib/inputscript.h>
+#include <lib/textfield.h>
 #include <platform/gxm.h>
 #include <platform/log.h>
 #include <cstring>
@@ -84,11 +85,21 @@ x86::reg32 Renderer::getBackBuffer() const
     return m_videoMemory->getBlockStart() + (1 - m_currentBuffer) * m_width * m_height * 2;
 }
 
+// Submits the acquired frame and acquires the next one. Callers run without the execution lock, so the
+// wait for a free slot happens here and never in a Glide call that holds the lock.
+void Renderer::submit()
+{
+    pf::gxm::Device& device = pf::gxm::Device::get();
+    device.submitFrame();
+    device.acquireFrame();
+}
+
 // Submits the recorded Glide frame.
 void Renderer::present()
 {
+    TextField::update(m_application);
     Gamepad::updateKeys();
-    pf::gxm::Device::get().submitFrame();
+    submit();
 }
 
 // Presents the guest front buffer.
@@ -99,7 +110,7 @@ void Renderer::update(x86::reg32 vblanks)
     pf::gxm::Frame* pending = device.currentFrame();
     if (pending && pending->kind == pf::gxm::FrameGlide)
     {
-        GlideRenderer::flushActive();
+        GlideRenderer::endActiveFrame();
         device.submitFrame();
     }
 
@@ -127,7 +138,7 @@ void Renderer::update(x86::reg32 vblanks)
         }
     }
     Gamepad::updateKeys();
-    device.submitFrame();
+    submit();
 }
 
 x86::reg32 Renderer::lock(x86::reg32 index)

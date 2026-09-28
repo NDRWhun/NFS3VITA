@@ -1,6 +1,7 @@
 #include <platform/gxm.h>
 #include <platform/ime.h>
 #include <platform/log.h>
+#include <platform/perf.h>
 #include <platform/sync.h>
 #include <psp2/gxm.h>
 #include <psp2/display.h>
@@ -40,6 +41,7 @@ struct DisplayData
     void*       address;
     uint32_t    vblanks;
     uint32_t    frameIndex;     // 0: dialog refresh without a game frame
+    uint32_t    endSceneTime;   // perf::now() after the frame's sceGxmEndScene
 };
 
 struct QuadVertex
@@ -125,6 +127,10 @@ void  patcherHostFree(void*, void* mem)       { free(mem); }
 void displayCallback(const void* data)
 {
     const DisplayData* display = static_cast<const DisplayData*>(data);
+    const bool timed = display->frameIndex && perf::enabled();
+    const uint32_t start = timed ? perf::now() : 0;
+    if (timed)
+        perf::add(perf::GpuLatency, start - display->endSceneTime);
     SceDisplayFrameBuf frameBuffer;
     memset(&frameBuffer, 0, sizeof(frameBuffer));
     frameBuffer.size = sizeof(frameBuffer);
@@ -135,6 +141,8 @@ void displayCallback(const void* data)
     frameBuffer.height = DisplayHeight;
     sceDisplaySetFrameBuf(&frameBuffer, SCE_DISPLAY_SETBUF_NEXTFRAME);
     sceDisplayWaitVblankStartMulti(display->vblanks ? display->vblanks : 1);
+    if (timed)
+        perf::add(perf::FlipWait, perf::now() - start);
     if (display->frameIndex)
         s_completedFrameIndex.store(display->frameIndex);
 }
@@ -208,11 +216,19 @@ struct Device::Impl
     SceUID                  atlasUid = InvalidUid;
     SceGxmTexture           atlasTexture;
 
-    // Frame slots
+    // Frame slots. A slot is handed back by the render thread once its scene is queued; the game thread then
+    // waits for gpuPending before it writes the slot's buffers again.
+    struct Slot
+    {
+        SceUID                      vertexUid = InvalidUid;
+        SceUID                      framebufferUid = InvalidUid;
+        SceUID                      paletteUid = InvalidUid;
+        SceGxmNotification          vertexDone = {};        // vertex stage finished: vertices no longer read
+        SceGxmNotification          fragmentDone = {};      // fragment stage finished: framebuffer and palette no longer read
+        const SceGxmNotification*   gpuPending = nullptr;   // notification of the slot's last scene, null if none
+    };
     Frame                   frames[FrameSlots];
-    SceUID                  frameVertexUid[FrameSlots] = { InvalidUid, InvalidUid };
-    SceUID                  frameFramebufferUid[FrameSlots] = { InvalidUid, InvalidUid };
-    SceUID                  framePaletteUid[FrameSlots] = { InvalidUid, InvalidUid };
+    Slot                    slots[FrameSlots];
     uint32_t                acquireSlot = 0;
     uint32_t                renderSlot = 0;
     bool                    frameAcquired = false;
@@ -224,6 +240,7 @@ struct Device::Impl
     Thread*                 thread = nullptr;
     volatile bool           running = false;
     Rect                    viewport = { 0, 0, DisplayWidth, DisplayHeight };
+    uint32_t                endSceneTime = 0;       // render thread: perf::now() after the last game frame's scene
 
     bool initCore();
     bool initDisplay();
@@ -234,7 +251,7 @@ struct Device::Impl
     static int threadEntry(void* self);
     void run();
     void beginScene(SceGxmColorSurface* surface, SceGxmSyncObject* sync);
-    void renderFrame(Frame& frame);
+    void renderFrame(Frame& frame, Slot& slot);
     void renderDialogFrame();
     void drawQuad(uint32_t first, const SceGxmTexture* texture, SceGxmVertexProgram* vp, SceGxmFragmentProgram* fp, const float* color);
     void drawImage(void* image);
@@ -513,16 +530,23 @@ bool Device::Impl::initBuffers()
         triangleIndices[i] = uint16_t(i);
     updateQuads();
 
+    // Two notification words per slot; frame indices start at 1, so a zeroed word never matches.
+    volatile unsigned int* notifications = sceGxmGetNotificationRegion();
     for (uint32_t i = 0; i < FrameSlots; ++i)
     {
         Frame& frame = frames[i];
+        Slot& slot = slots[i];
         frame.vertices = static_cast<Vertex*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, sizeof(Vertex) * MaxVertices, 4,
-                                                       SCE_GXM_MEMORY_ATTRIB_READ, &frameVertexUid[i]));
+                                                       SCE_GXM_MEMORY_ATTRIB_READ, &slot.vertexUid));
         frame.framebuffer = static_cast<uint8_t*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, FramebufferBytes,
-                                                           SCE_GXM_TEXTURE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_READ, &frameFramebufferUid[i]));
+                                                           SCE_GXM_TEXTURE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_READ, &slot.framebufferUid));
         frame.palette = static_cast<uint32_t*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, PaletteBytes,
-                                                        SCE_GXM_PALETTE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_READ, &framePaletteUid[i]));
+                                                        SCE_GXM_PALETTE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_READ, &slot.paletteUid));
         frame.drawCalls.reserve(256);
+        slot.vertexDone.address = notifications + 2 * i;
+        slot.fragmentDone.address = notifications + 2 * i + 1;
+        *slot.vertexDone.address = 0;
+        *slot.fragmentDone.address = 0;
     }
     return true;
 }
@@ -574,9 +598,19 @@ void Device::Impl::run()
         if (!running)
             break;
         Frame& frame = frames[renderSlot];
-        renderFrame(frame);
+        const bool timed = perf::enabled() && frame.kind != FrameEmpty;
+        const uint32_t start = timed ? perf::now() : 0;
+        const uint32_t drawCalls = uint32_t(frame.drawCalls.size());
+        const uint32_t triangles = frame.vertexCount / 3;
+        renderFrame(frame, slots[renderSlot]);
+        const uint32_t end = timed ? perf::now() : 0;
         renderSlot = (renderSlot + 1) % FrameSlots;
         freeSlots.post();
+        if (timed)
+        {
+            perf::add(perf::Render, end - start);
+            perf::framePresented(drawCalls, triangles);
+        }
     }
 }
 
@@ -625,11 +659,11 @@ void* Device::Impl::previousImage() const
     return dialogShown ? cleanData : displayData[frontBuffer];
 }
 
-void Device::Impl::renderFrame(Frame& frame)
+void Device::Impl::renderFrame(Frame& frame, Slot& slot)
 {
     if (frame.kind == FrameEmpty)
     {
-        s_completedFrameIndex.store(frame.frameIndex);
+        // Nothing read from the slot; the next displayed frame also completes this index.
         if (ime::pending())
             renderDialogFrame();
         return;
@@ -709,7 +743,13 @@ void Device::Impl::renderFrame(Frame& frame)
         }
     }
 
-    sceGxmEndScene(context, nullptr, nullptr);
+    // Glide frames only read the slot's vertices (vertex stage); framebuffer frames read its texture and palette.
+    slot.vertexDone.value = frame.frameIndex;
+    slot.fragmentDone.value = frame.frameIndex;
+    sceGxmEndScene(context, &slot.vertexDone, &slot.fragmentDone);
+    slot.gpuPending = frame.kind == FrameGlide ? &slot.vertexDone : &slot.fragmentDone;
+    if (perf::enabled())
+        endSceneTime = perf::now();
     finishFrame(frame.vblanks, frame.frameIndex);
 }
 
@@ -745,7 +785,12 @@ void Device::Impl::present(uint32_t vblanks, uint32_t frameIndex)
     data.address = displayData[backBuffer];
     data.vblanks = vblanks;
     data.frameIndex = frameIndex;
+    data.endSceneTime = endSceneTime;
+    const bool timed = frameIndex && perf::enabled();
+    const uint32_t start = timed ? perf::now() : 0;
     sceGxmDisplayQueueAddEntry(displaySync[frontBuffer], displaySync[backBuffer], &data);
+    if (timed)
+        perf::add(perf::QueueWait, perf::now() - start);
     frontBuffer = backBuffer;
     backBuffer = (backBuffer + 1) % DisplayBuffers;
 }
@@ -828,11 +873,11 @@ void Device::shutdown()
     gpuUsseFree(impl.patcherVertexUsseUid, true);
     gpuUsseFree(impl.patcherFragmentUsseUid, false);
     gpuFree(impl.patcherBufferUid);
-    for (uint32_t i = 0; i < FrameSlots; ++i)
+    for (Impl::Slot& slot : impl.slots)
     {
-        gpuFree(impl.frameVertexUid[i]);
-        gpuFree(impl.frameFramebufferUid[i]);
-        gpuFree(impl.framePaletteUid[i]);
+        gpuFree(slot.vertexUid);
+        gpuFree(slot.framebufferUid);
+        gpuFree(slot.paletteUid);
     }
     gpuFree(impl.atlasUid);
     gpuFree(impl.quadVerticesUid);
@@ -863,7 +908,22 @@ Frame& Device::acquireFrame()
     Impl& impl = *m_impl;
     if (!impl.frameAcquired)
     {
+        const bool timed = perf::enabled();
+        const uint32_t start = timed ? perf::now() : 0;
         impl.freeSlots.wait();
+        Impl::Slot& slot = impl.slots[impl.acquireSlot];
+        if (slot.gpuPending)
+        {
+            const uint32_t fenceStart = timed ? perf::now() : 0;
+            int result = sceGxmNotificationWait(slot.gpuPending);
+            if (result < 0)
+                logError("sceGxmNotificationWait failed: 0x%08x", result);
+            slot.gpuPending = nullptr;
+            if (timed)
+                perf::add(perf::FenceWait, perf::now() - fenceStart);
+        }
+        if (timed)
+            perf::add(perf::SlotWait, perf::now() - start);
         Frame& frame = impl.frames[impl.acquireSlot];
         frame.kind = FrameEmpty;
         frame.vblanks = 1;

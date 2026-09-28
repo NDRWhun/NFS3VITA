@@ -4,6 +4,8 @@
 #include <platform/config.h>
 #include <platform/gxm.h>
 #include <platform/log.h>
+#include <platform/perf.h>
+#include <fpu.h>
 #include <mmx.h>
 #include <nfs3hp.h>
 #include <psp2/ctrl.h>
@@ -102,7 +104,9 @@ int main(int, char**)
     pf::logInit(s_logFile);
     pf::logInfo("NFS3VITA starting");
     x86::mmxSelfTest();
+    x86::fpuSelfTest();
     pf::Config::load("ux0:data/nfs3vita/nfs3vita.cfg");
+    pf::perf::init(pf::Config::getBool("perf_log", true));
     win32::InputScript::load("ux0:data/nfs3vita/autoinput.txt");
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);

@@ -4,7 +4,7 @@
 #include <lib/winapp.h>
 #include <winapi/types.h>
 
-namespace pf { namespace gxm { struct Frame; } }
+namespace pf { namespace gxm { struct Frame; struct Vertex; } }
 
 namespace win32
 {
@@ -67,22 +67,27 @@ public:
                         x86::reg32 largeMipmap, x86::reg32 smallMimmap, TextureFormat format);
     void drawTriangle(const GrVertex* a, const GrVertex* b, const GrVertex* c);
 
-    // Closes the open draw call of the active renderer before a frame is submitted elsewhere.
-    static void flushActive();
+    // Closes the active renderer's open draw call and releases its frame before the frame is submitted elsewhere.
+    static void endActiveFrame();
 
 private:
+    // Per-state fields of pf::gxm::Vertex, updated when the state changes.
+    struct VertexState
+    {
+        float colorCombine, alphaCombine, texWrap;
+        float atlasSize, width, offX, offY;
+    };
+
     pf::gxm::Frame& frame();
+    pf::gxm::Frame& beginFrame();
     void flush();
-    void writeVertex(const GrVertex* v);
+    static void writeVertex(pf::gxm::Vertex* vertex, const GrVertex* v, const VertexState& state);
 
 private:
     Renderer*               m_renderer;
+    pf::gxm::Frame*         m_frame;            // Glide frame being recorded; null until the first Glide call after a submit
     x86::reg32              m_flushedVertices;
-    x86::reg32              m_textureOffsetX;
-    x86::reg32              m_textureOffsetY;
-    x86::reg32              m_textureOffsetW;
-    float                   m_colorFactor;
-    float                   m_alphaFactor;
+    VertexState             m_vertexState;
     bool                    m_zBuffer;
     bool                    m_zTest;
     bool                    m_alphaBlend;

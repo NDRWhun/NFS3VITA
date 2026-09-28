@@ -10,8 +10,14 @@ namespace win32
 {
 
 static const x86::reg32 s_simulatedMemory = 64*1024*1024;
+// One byte per 4 KB block of the simulated memory, page-aligned.
+static const x86::reg32 s_blockMapSize = (s_simulatedMemory / 4096 + 4095) & ~4095u;
+// End of the highest image section (voodoo2a .rsrc at 0xa97200, 0x400 bytes), page-aligned.
+static const x86::reg32 s_sectionLimit = 0xa98000;
+// Layout: sections, block map, simulated memory.
+static const x86::reg32 s_arenaSize = s_sectionLimit + s_blockMapSize + s_simulatedMemory;
+static_assert(s_arenaSize % 4096 == 0, "memblock sizes are whole pages");
 
-x86::reg8* MemMap::s_memory = nullptr;
 x86::reg8* MemMap::s_blocks = nullptr;
 x86::reg32 MemMap::s_blockCount = 0;
 x86::reg32 MemMap::s_blockSize = 0;
@@ -23,29 +29,28 @@ std::vector<MemMap*> MemMap::s_memMaps;
 static SceUID s_arenaBlock = -1;
 
 // The guest address space is one zeroed memblock; pages are always accessible.
-static void* alloc(x86::reg32 size)
+// Runs before main, so failure is reported by MemMap::init once logging is up.
+static x86::reg8* allocArena()
 {
-    size = (size + 4095) & ~4095u;
-    s_arenaBlock = sceKernelAllocMemBlock("nfs3_guest", SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_RW, size, nullptr);
+    s_arenaBlock = sceKernelAllocMemBlock("nfs3_guest", SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_RW, s_arenaSize, nullptr);
     if (s_arenaBlock < 0)
-        pf::fatal("guest memory allocation of %u bytes failed: 0x%08x", size, s_arenaBlock);
+        return nullptr;
     void* base = nullptr;
     sceKernelGetMemBlockBase(s_arenaBlock, &base);
-    memset(base, 0, size);
-    pf::logInfo("guest memory: %u bytes at %p", size, base);
-    return base;
+    memset(base, 0, s_arenaSize);
+    return static_cast<x86::reg8*>(base);
 }
 
-static void dealloc(void* mem, x86::reg32 size)
+static void freeArena()
 {
-    NFS2_USE(mem);
-    NFS2_USE(size);
     if (s_arenaBlock >= 0)
     {
         sceKernelFreeMemBlock(s_arenaBlock);
         s_arenaBlock = -1;
     }
 }
+
+x86::reg8* const g_guestBase = allocArena();
 
 MemMap::MemMap(x86::reg32 size)
     :   m_block(x86::reg32(-1))
@@ -119,10 +124,13 @@ MemMap* MemMap::findBlock(x86::reg32 memIndex)
     return result;
 }
 
-x86::reg8* MemMap::init(x86::reg32 baseAddress, const std::vector<Section>& sections)
+void MemMap::init(x86::reg32 baseAddress, const std::vector<Section>& sections)
 {
+    if (!g_guestBase)
+        pf::fatal("guest memory allocation of %u bytes failed: 0x%08x", s_arenaSize, s_arenaBlock);
+    pf::logInfo("guest memory: %u bytes at %p", s_arenaSize, static_cast<void*>(g_guestBase));
     s_blockCount = s_simulatedMemory / 4096;
-    s_blockSize = (s_blockCount + 4095) & ~4095u;
+    s_blockSize = s_blockMapSize;
     x86::reg32 maxEnd = 0;
     for (std::vector<Section>::const_iterator it = sections.begin(); it != sections.end(); ++it)
     {
@@ -131,8 +139,9 @@ x86::reg8* MemMap::init(x86::reg32 baseAddress, const std::vector<Section>& sect
             maxEnd = end;
     }
     s_sectionSize = (maxEnd + 4095) & ~4095u;
-    s_memory = reinterpret_cast<x86::reg8*>(alloc(s_simulatedMemory+s_blockSize+s_sectionSize));
-    s_blocks = s_memory + s_sectionSize;
+    if (s_sectionSize > s_sectionLimit)
+        pf::fatal("image sections end at 0x%08x, past the guest arena limit 0x%08x", s_sectionSize, s_sectionLimit);
+    s_blocks = g_guestBase + s_sectionSize;
     s_addressOffset = s_sectionSize + s_blockSize;
     for (std::vector<Section>::const_iterator it = sections.begin(); it != sections.end(); ++it)
     {
@@ -140,11 +149,10 @@ x86::reg8* MemMap::init(x86::reg32 baseAddress, const std::vector<Section>& sect
         NFS2_ASSERT(it->baseAddress + it->size <= s_sectionSize);
         if (it->data)
         {
-            memcpy(s_memory + it->baseAddress, it->data, it->size);
+            memcpy(g_guestBase + it->baseAddress, it->data, it->size);
         }
     }
     s_lock = new Mutex("MemMap");
-    return s_memory;
 }
 
 void MemMap::fini()
@@ -161,7 +169,7 @@ void MemMap::fini()
     s_addressOffset = 0;
     delete s_lock;
     s_lock = nullptr;
-    dealloc(s_memory, s_simulatedMemory + s_blockSize + s_sectionSize);
+    freeArena();
 }
 
 void MemMap::fillDebugGraph(x86::reg16* graph)

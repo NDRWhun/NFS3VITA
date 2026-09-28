@@ -1,6 +1,9 @@
 #include <winapi/dinput/idirectinputdevice.h>
 #include <winapi/wrapper.h>
+#include <lib/controls.h>
 #include <lib/gamepad.h>
+#include <cstddef>
+#include <cstdio>
 
 
 namespace win32 { namespace dinput
@@ -8,7 +11,30 @@ namespace win32 { namespace dinput
 
 
 x86::reg32 IDirectInputDevice::s_iDirectInputDeviceVtable = 0;
-const GUID IDirectInputDevice::s_diPropRange =  { 0x6F1D2B61, 0xD5A0, 0x11CF, { 0xBF,0xC7,0x44,0x45,0x53,0x54,0x00,0x00 } };
+
+static const HRESULT DI_OK                = 0;
+static const HRESULT DIERR_UNSUPPORTED    = 0x80004001;
+static const HRESULT DIERR_OBJECTNOTFOUND = 0x80070002;
+static const HRESULT DIERR_INVALIDPARAM   = 0x80070057;
+
+// MAKEDIPROP(n): the property "GUID" argument is the number itself.
+enum DirectInputProperty
+{
+    DIPROP_RANGE      = 4,
+    DIPROP_DEADZONE   = 5,
+    DIPROP_SATURATION = 6
+};
+
+enum DirectInputObjectType
+{
+    DIDFT_ABSAXIS   = 0x00000002,
+    DIDFT_AXIS      = 0x00000003,
+    DIDFT_PSHBUTTON = 0x00000004,
+    DIDFT_BUTTON    = 0x0000000C
+};
+
+static const x86::reg32 s_propertyUnits = 10000;   // dead zone and saturation: 10000 = full deflection
+static const LONG       s_absentAxis    = 32767;   // centre of the default range 0..65535
 
 enum DirectInutDeviceForceFeedBackCommand
 {
@@ -97,6 +123,81 @@ struct IDirectInputDevice::DIPROPPOINTER
     Packed<UINT>    uData;
 };
 
+struct IDirectInputDevice::DIPROPDWORD
+{
+    IDirectInputDevice::DIPROPHEADER diph;
+    DWORD dwData;
+};
+
+// Joystick axis addressed by dwObj/dwHow, or -1.
+static int findAxis(DWORD obj, DWORD how)
+{
+    x86::reg32 axis;
+    if (how == DIPH_BYOFFSET && obj % sizeof(LONG) == 0)
+        axis = obj / sizeof(LONG);
+    else if (how == DIPH_BYID && (obj & DIDFT_AXIS))
+        axis = (obj >> 8) & 0xffff;
+    else
+        return -1;
+    return axis < controls::JoystickAxisCount ? int(axis) : -1;
+}
+
+// Joystick button addressed by dwObj/dwHow, or -1.
+static int findButton(DWORD obj, DWORD how)
+{
+    const DWORD firstOffset = offsetof(DIJOYSTATE, rgbButtons);
+    x86::reg32 button;
+    if (how == DIPH_BYOFFSET && obj >= firstOffset)
+        button = obj - firstOffset;
+    else if (how == DIPH_BYID && (obj & DIDFT_BUTTON))
+        button = (obj >> 8) & 0xffff;
+    else
+        return -1;
+    return button < controls::joystickButtonCount() ? int(button) : -1;
+}
+
+// Axes [first, last) a property header addresses; false if the device has no such object.
+static bool propertyAxes(DWORD obj, DWORD how, x86::reg32& first, x86::reg32& last)
+{
+    if (how == DIPH_DEVICE)
+    {
+        first = 0;
+        last = controls::JoystickAxisCount;
+        return obj == 0;
+    }
+    const int axis = findAxis(obj, how);
+    first = x86::reg32(axis);
+    last = first + 1;
+    return axis >= 0;
+}
+
+static bool isAxisProperty(x86::reg32 property)
+{
+    return property == DIPROP_RANGE || property == DIPROP_DEADZONE || property == DIPROP_SATURATION;
+}
+
+// DirectInput axis semantics: dead zone and saturation are fractions of the distance from the
+// centre (10000 = full deflection); the result is scaled to the axis range.
+static LONG axisPosition(const Gamepad::AxisProperties& properties, x86::sreg16 value)
+{
+    const int64_t full = 32767;
+    int64_t magnitude = value < 0 ? -int64_t(value) : int64_t(value);
+    if (magnitude > full)
+        magnitude = full;
+    const int64_t deadZone = int64_t(properties.deadZone) * full / s_propertyUnits;
+    const int64_t saturation = int64_t(properties.saturation) * full / s_propertyUnits;
+    if (magnitude <= deadZone)
+        magnitude = 0;
+    else if (magnitude >= saturation)
+        magnitude = full;
+    else
+        magnitude = (magnitude - deadZone) * full / (saturation - deadZone);
+    const int64_t position = value < 0 ? full - magnitude : full + magnitude;
+    const int64_t min = properties.min;
+    const int64_t max = properties.max;
+    return LONG(min + position * (max - min) / (2 * full));
+}
+
 //DEFINE_GUID(IID_IDirectInputDeviceA,	0x5944E680,0xC92E,0x11CF,0xBF,0xC7,0x44,0x45,0x53,0x54,0x00,0x00);
 DEFINE_GUID(IID_IDirectInputDevice2A,	0x5944E682,0xC92E,0x11CF,0xBF,0xC7,0x44,0x45,0x53,0x54,0x00,0x00);
 
@@ -116,7 +217,7 @@ HRESULT IDirectInputDevice::GetCapabilities(WinApplication* app, x86::CPU& cpu,
     memset(lpDIDevCaps, 0, sizeof(DIDEVCAPS));
     lpDIDevCaps->dwSize = sizeof(DIDEVCAPS);
     lpDIDevCaps->dwFlags = DIDC_ATTACHED | DIDC_POLLEDDATAFORMAT /* | DIDC_FORCEFEEDBACK */;
-    lpDIDevCaps->dwDevType = 4;
+    lpDIDevCaps->dwDevType = dynamic_cast<Gamepad*>(m_resource) ? controls::JoystickDeviceType : 4;
     lpDIDevCaps->dwButtons = dynamic_cast<Input*>(m_resource)->getButtonCount();
     lpDIDevCaps->dwAxes = dynamic_cast<Input*>(m_resource)->getAxesCount();
     return 0;
@@ -134,25 +235,75 @@ HRESULT IDirectInputDevice::EnumObjects(WinApplication* app, x86::CPU& cpu,
     return 1;
 }
 
+// Joystick axis range, dead zone and saturation; the device-wide form reports axis 0.
 HRESULT IDirectInputDevice::GetProperty(WinApplication* app, x86::CPU& cpu,
                                         Packed<const GUID> rguidProp, LPDIPROPHEADER pdiph)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(rguidProp);
-    NFS2_USE(pdiph);
-    //NFS2_ASSERT(false);
-    return 1;
+    Gamepad* gamepad = dynamic_cast<Gamepad*>(m_resource);
+    const x86::reg32 property = rguidProp;
+    if (!gamepad || !isAxisProperty(property))
+        return DIERR_UNSUPPORTED;
+    const DWORD size = property == DIPROP_RANGE ? sizeof(DIPROPRANGE) : sizeof(DIPROPDWORD);
+    if (!pdiph || pdiph->dwHeaderSize != sizeof(DIPROPHEADER) || pdiph->dwSize != size)
+        return DIERR_INVALIDPARAM;
+    x86::reg32 first, last;
+    if (!propertyAxes(pdiph->dwObj, pdiph->dwHow, first, last))
+        return DIERR_OBJECTNOTFOUND;
+    const Gamepad::AxisProperties& axis = gamepad->axisProperties(first);
+    if (property == DIPROP_RANGE)
+    {
+        DIPROPRANGE* range = reinterpret_cast<DIPROPRANGE*>(pdiph);
+        range->lMin = axis.min;
+        range->lMax = axis.max;
+    }
+    else
+    {
+        reinterpret_cast<DIPROPDWORD*>(pdiph)->dwData = property == DIPROP_DEADZONE ? axis.deadZone : axis.saturation;
+    }
+    return DI_OK;
 }
 
+// Joystick axis range, dead zone and saturation; other properties are accepted and ignored.
 HRESULT IDirectInputDevice::SetProperty(WinApplication* app, x86::CPU& cpu,
                                         Packed<const GUID> rguidProp, LPCDIPROPHEADER pdiph)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(rguidProp);
-    NFS2_USE(pdiph);
-    return 0;
+    Gamepad* gamepad = dynamic_cast<Gamepad*>(m_resource);
+    const x86::reg32 property = rguidProp;
+    if (!gamepad || !isAxisProperty(property))
+        return DI_OK;
+    const DWORD size = property == DIPROP_RANGE ? sizeof(DIPROPRANGE) : sizeof(DIPROPDWORD);
+    if (!pdiph || pdiph->dwHeaderSize != sizeof(DIPROPHEADER) || pdiph->dwSize != size)
+        return DIERR_INVALIDPARAM;
+    x86::reg32 first, last;
+    if (!propertyAxes(pdiph->dwObj, pdiph->dwHow, first, last))
+        return DIERR_OBJECTNOTFOUND;
+    if (property == DIPROP_RANGE)
+    {
+        const DIPROPRANGE* range = reinterpret_cast<const DIPROPRANGE*>(pdiph);
+        if (range->lMin >= range->lMax)
+            return DIERR_INVALIDPARAM;
+        for (x86::reg32 axis = first; axis < last; ++axis)
+        {
+            gamepad->axisProperties(axis).min = range->lMin;
+            gamepad->axisProperties(axis).max = range->lMax;
+        }
+    }
+    else
+    {
+        const DWORD value = reinterpret_cast<const DIPROPDWORD*>(pdiph)->dwData;
+        if (value > s_propertyUnits)
+            return DIERR_INVALIDPARAM;
+        for (x86::reg32 axis = first; axis < last; ++axis)
+        {
+            Gamepad::AxisProperties& properties = gamepad->axisProperties(axis);
+            (property == DIPROP_DEADZONE ? properties.deadZone : properties.saturation) = value;
+        }
+    }
+    return DI_OK;
 }
 
 HRESULT IDirectInputDevice::Acquire(WinApplication* app, x86::CPU& cpu)
@@ -172,35 +323,38 @@ HRESULT IDirectInputDevice::Unacquire(WinApplication* app, x86::CPU& cpu)
 HRESULT IDirectInputDevice::GetDeviceState(WinApplication* app, x86::CPU& cpu,
                                            DWORD cbData, LPVOID lpvData)
 {
-    NFS2_USE(app);
-    NFS2_USE(cpu);
-    NFS2_USE(cbData);
-    NFS2_USE(lpvData);
-    app->unlockContext(cpu);
     Gamepad* gamepad = dynamic_cast<Gamepad*>(m_resource);
+    GamepadState pad;
+    memset(&pad, 0, sizeof(pad));
+    if (gamepad)
+    {
+        app->unlockContext(cpu);
+        pad = gamepad->getState();
+        app->lockContext(cpu);
+    }
     memset(lpvData, 0, cbData);
     if (gamepad)
     {
         NFS2_ASSERT(cbData == sizeof(DIJOYSTATE));
         DIJOYSTATE* state = reinterpret_cast<DIJOYSTATE*>(lpvData);
-        GamepadState gpState = gamepad->getState();
-        state->lX = 0x7fff + gpState.axes[0];
-        state->lY = 0x7fff + gpState.axes[1];
-        state->lZ = 0x7fff + gpState.axes[4];
-        state->lRx = 0x7fff + gpState.axes[2];
-        state->lRy = 0x7fff + gpState.axes[3];
-        state->lRz = 0x7fff + gpState.axes[5];
-        state->rgdwPOV[0] = -1;
-        state->rgdwPOV[1] = -1;
-        state->rgdwPOV[2] = -1;
-        state->rgdwPOV[3] = -1;
-        for (int button = 0; button < 16; ++button)
-        {
-            state->rgbButtons[button] = (gpState.buttons & (1ll<<button)) ? 0x80 : 0x00;
-        }
+        // Axes the device lacks read as centred, so bindings left on them stay idle.
+        auto position = [&](x86::reg32 axis) {
+            return axis < controls::JoystickAxisCount ? axisPosition(gamepad->axisProperties(axis), pad.axes[axis]) : s_absentAxis;
+        };
+        state->lX = position(0);
+        state->lY = position(1);
+        state->lZ = position(2);
+        state->lRx = position(3);
+        state->lRy = position(4);
+        state->lRz = position(5);
+        state->rglSlider[0] = position(6);
+        state->rglSlider[1] = position(7);
+        for (DWORD& pov : state->rgdwPOV)
+            pov = 0xffffffff;
+        for (x86::reg32 button = 0; button < controls::joystickButtonCount(); ++button)
+            state->rgbButtons[button] = (pad.buttons & (x86::reg64(1) << button)) ? 0x80 : 0x00;
     }
-    app->lockContext(cpu);
-    return 0;
+    return DI_OK;
 }
 
 HRESULT IDirectInputDevice::GetDeviceData(WinApplication* app, x86::CPU& cpu,
@@ -250,24 +404,29 @@ HRESULT IDirectInputDevice::GetObjectInfo(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(dwObj);
-    NFS2_USE(dwHow);
     NFS2_ASSERT(pdidoi->dwSize == sizeof(DIDEVICEOBJECTINSTANCE));
     memset(pdidoi, 0, pdidoi->dwSize);
     pdidoi->dwSize = sizeof(DIDEVICEOBJECTINSTANCE);
-    /*switch (dwHow)
+    if (!dynamic_cast<Gamepad*>(m_resource))
+        return DI_OK;
+    // The game counts the joystick's axes and buttons by probing their DIJOYSTATE offsets.
+    const int axis = findAxis(dwObj, dwHow);
+    if (axis >= 0)
     {
-    case DIPH_BYOFFSET:
-        NFS2_ASSERT(false);
-        break;
-    case DIPH_DEVICE:
-    case DIPH_BYID:
-    case DIPH_BYUSAGE:
-        NFS2_ASSERT(false);
-        break;
+        pdidoi->dwOfs = DWORD(axis) * sizeof(LONG);
+        pdidoi->dwType = DIDFT_ABSAXIS | (DWORD(axis) << 8);
+        snprintf(pdidoi->tszName, sizeof(pdidoi->tszName), "%c Axis", 'X' + axis);
+        return DI_OK;
     }
-    NFS2_ASSERT(false);*/
-    return 0;
+    const int button = findButton(dwObj, dwHow);
+    if (button >= 0)
+    {
+        pdidoi->dwOfs = offsetof(DIJOYSTATE, rgbButtons) + DWORD(button);
+        pdidoi->dwType = DIDFT_PSHBUTTON | (DWORD(button) << 8);
+        snprintf(pdidoi->tszName, sizeof(pdidoi->tszName), "Button %d", button + 1);
+        return DI_OK;
+    }
+    return DIERR_OBJECTNOTFOUND;
 }
 
 HRESULT IDirectInputDevice::GetDeviceInfo(WinApplication* app, x86::CPU& cpu,

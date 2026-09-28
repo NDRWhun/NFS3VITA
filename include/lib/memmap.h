@@ -9,6 +9,11 @@ namespace win32
 
 class Mutex;
 
+// Host address of guest address 0: one memblock allocated by a static initialiser in memmap.cpp.
+// Const, so compiled code need not reload it after guest stores. No static initialiser may touch
+// guest memory.
+extern x86::reg8* const g_guestBase;
+
 struct Section
 {
     const x86::reg8*    data;
@@ -25,7 +30,7 @@ public:
     x86::reg32 getBlockStart() const  { return s_addressOffset + m_block * 4096; }
     x86::reg32 getBlockSize() const   { return m_blockCount * 4096; }
 
-    static x86::reg8* init(x86::reg32 baseAddress, const std::vector<Section>& sections);
+    static void init(x86::reg32 baseAddress, const std::vector<Section>& sections);
     static void fini();
     static MemMap* findBlock(x86::reg32 memIndex);
 
@@ -36,7 +41,6 @@ private:
     x86::reg32 m_blockCount;
 
 private:
-    static x86::reg8*           s_memory;
     static x86::reg8*           s_blocks;
     static x86::reg32           s_blockCount;
     static x86::reg32           s_blockSize;

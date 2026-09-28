@@ -19,6 +19,7 @@ private:
     typedef DIPROPHEADER*       LPDIPROPHEADER;
     typedef const DIPROPHEADER* LPCDIPROPHEADER;
     struct DIPROPRANGE;
+    struct DIPROPDWORD;
 
     struct DIPROPPOINTER;
     typedef DIPROPPOINTER*          LPDIPROPPOINTER;
@@ -209,7 +210,6 @@ private:
 
 private:
     static x86::reg32 s_iDirectInputDeviceVtable;
-    static const GUID s_diPropRange;
 };
 
 }}

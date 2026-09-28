@@ -4,6 +4,7 @@
 #include <lib/inputscript.h>
 #include <platform/gxm.h>
 #include <platform/log.h>
+#include <cstddef>
 #include <cstring>
 
 namespace win32
@@ -12,20 +13,20 @@ namespace win32
 static const x86::reg32 s_atlasSize = pf::gxm::AtlasSize;
 static GlideRenderer* s_active = nullptr;
 
-void GlideRenderer::flushActive()
+void GlideRenderer::endActiveFrame()
 {
     if (s_active)
+    {
         s_active->flush();
+        s_active->m_frame = nullptr;
+    }
 }
 
 GlideRenderer::GlideRenderer(Renderer* renderer)
     :   m_renderer(renderer)
+    ,   m_frame(nullptr)
     ,   m_flushedVertices(0)
-    ,   m_textureOffsetX(0)
-    ,   m_textureOffsetY(0)
-    ,   m_textureOffsetW(256)
-    ,   m_colorFactor(1.f)
-    ,   m_alphaFactor(1.f)
+    ,   m_vertexState{ 1.f, 1.f, 1.f, float(s_atlasSize), 256.f, 0.f, 0.f }
     ,   m_zBuffer(true)
     ,   m_zTest(true)
     ,   m_alphaBlend(true)
@@ -38,20 +39,26 @@ GlideRenderer::GlideRenderer(Renderer* renderer)
 GlideRenderer::~GlideRenderer()
 {
     if (s_active == this)
+    {
+        flush();
         s_active = nullptr;
+    }
     delete m_tmus[0];
 }
 
-// The frame currently being recorded; acquires and tags a new one when needed.
+// The frame currently being recorded.
 pf::gxm::Frame& GlideRenderer::frame()
+{
+    return m_frame ? *m_frame : beginFrame();
+}
+
+// Tags the acquired frame for Glide, acquiring one only if nothing was submitted yet.
+pf::gxm::Frame& GlideRenderer::beginFrame()
 {
     pf::gxm::Device& device = pf::gxm::Device::get();
     pf::gxm::Frame* current = device.currentFrame();
     if (!current)
-    {
         current = &device.acquireFrame();
-        m_flushedVertices = 0;
-    }
     if (current->kind != pf::gxm::FrameGlide)
     {
         InputScript::resume();
@@ -60,6 +67,8 @@ pf::gxm::Frame& GlideRenderer::frame()
         current->sourceWidth = m_renderer->m_width;
         current->sourceHeight = m_renderer->m_height;
     }
+    m_frame = current;
+    m_flushedVertices = current->drawCalls.empty() ? 0 : current->drawCalls.back().lastVertex;
     return *current;
 }
 
@@ -78,8 +87,8 @@ void GlideRenderer::render(x86::reg32 buffer)
 // Closes the current draw call so following triangles get the new state.
 void GlideRenderer::flush()
 {
-    pf::gxm::Frame* f = pf::gxm::Device::get().currentFrame();
-    if (!f || f->kind != pf::gxm::FrameGlide || f->vertexCount == m_flushedVertices)
+    pf::gxm::Frame* f = m_frame;
+    if (!f || f->vertexCount == m_flushedVertices)
         return;
     pf::gxm::DrawCall call;
     call.lastVertex = f->vertexCount;
@@ -94,6 +103,7 @@ void GlideRenderer::swap()
 {
     frame();
     flush();
+    m_frame = nullptr;
     m_flushedVertices = 0;
     m_renderer->present();
 }
@@ -142,12 +152,12 @@ void GlideRenderer::setAlphaBlendDst(AlphaBlend method)
 
 void GlideRenderer::setColorFactor(float colorFactor)
 {
-    m_colorFactor = colorFactor;
+    m_vertexState.colorCombine = colorFactor;
 }
 
 void GlideRenderer::setAlphaFactor(float alphaFactor)
 {
-    m_alphaFactor = alphaFactor;
+    m_vertexState.alphaCombine = alphaFactor;
 }
 
 void GlideRenderer::setTexture(x86::reg32 tmu, x86::reg32 address)
@@ -159,9 +169,9 @@ void GlideRenderer::setTexture(x86::reg32 tmu, x86::reg32 address)
         pf::logError("texture at 0x%x used before download", address);
         return;
     }
-    m_textureOffsetW = 256 >> (*info)->lod;
-    m_textureOffsetX = (*info)->x;
-    m_textureOffsetY = (*info)->y;
+    m_vertexState.width = float(x86::reg32(256) >> (*info)->lod);
+    m_vertexState.offX = float((*info)->x);
+    m_vertexState.offY = float((*info)->y);
 }
 
 // Converts the largest mip level into the atlas as ABGR words.
@@ -215,35 +225,50 @@ void GlideRenderer::setTextureData(x86::reg32 tmu, x86::reg32 address, const voi
     }
 }
 
-void GlideRenderer::writeVertex(const GrVertex* v)
+static_assert(sizeof(pf::gxm::Vertex) == 14 * sizeof(x86::reg32) && offsetof(pf::gxm::Vertex, color) == 12 &&
+              offsetof(pf::gxm::Vertex, oow) == 36 && offsetof(pf::gxm::Vertex, offY) == 52, "vertex word layout");
+
+static inline x86::reg32 word(float value)
 {
-    pf::gxm::Frame& f = frame();
-    NFS2_ASSERT(f.vertexCount < pf::gxm::MaxVertices);
-    pf::gxm::Vertex& out = f.vertices[f.vertexCount++];
-    out.x = v->x;
-    out.y = v->y;
-    out.z = v->ooz;
-    out.color = (x86::reg8)(v->r)
-              | (x86::reg8)(v->g) << 8
-              | (x86::reg8)(v->b) << 16
-              | (x86::reg8)(v->a) << 24;
-    out.u = v->tmuvtx[0].sow;
-    out.v = v->tmuvtx[0].tow;
-    out.colorCombine = m_colorFactor;
-    out.alphaCombine = m_alphaFactor;
-    out.texWrap = 1.f;
-    out.oow = v->oow;
-    out.atlasSize = float(s_atlasSize);
-    out.width = float(m_textureOffsetW);
-    out.offX = float(m_textureOffsetX);
-    out.offY = float(m_textureOffsetY);
+    x86::reg32 result;
+    memcpy(&result, &value, sizeof(result));
+    return result;
+}
+
+// Stores one vertex as 14 words in address order; the vertex buffer is uncached GPU memory.
+void GlideRenderer::writeVertex(pf::gxm::Vertex* vertex, const GrVertex* v, const VertexState& state)
+{
+    volatile x86::reg32* out = reinterpret_cast<volatile x86::reg32*>(vertex);
+    out[0] = word(v->x);
+    out[1] = word(v->y);
+    out[2] = word(v->ooz);
+    out[3] = (x86::reg32(v->r) & 0xff)
+           | (x86::reg32(v->g) & 0xff) << 8
+           | (x86::reg32(v->b) & 0xff) << 16
+           | x86::reg32(v->a) << 24;
+    out[4] = word(v->tmuvtx[0].sow);
+    out[5] = word(v->tmuvtx[0].tow);
+    out[6] = word(state.colorCombine);
+    out[7] = word(state.alphaCombine);
+    out[8] = word(state.texWrap);
+    out[9] = word(v->oow);
+    out[10] = word(state.atlasSize);
+    out[11] = word(state.width);
+    out[12] = word(state.offX);
+    out[13] = word(state.offY);
 }
 
 void GlideRenderer::drawTriangle(const GrVertex* a, const GrVertex* b, const GrVertex* c)
 {
-    writeVertex(a);
-    writeVertex(b);
-    writeVertex(c);
+    pf::gxm::Frame& f = frame();
+    const x86::reg32 count = f.vertexCount;
+    NFS2_ASSERT(count + 3 <= pf::gxm::MaxVertices);
+    pf::gxm::Vertex* out = f.vertices + count;
+    const VertexState state = m_vertexState;
+    writeVertex(out, a, state);
+    writeVertex(out + 1, b, state);
+    writeVertex(out + 2, c, state);
+    f.vertexCount = count + 3;
 }
 
 }

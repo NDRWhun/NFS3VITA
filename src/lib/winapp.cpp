@@ -11,6 +11,7 @@
 #include <winapi/dsetup.h>
 #include <winapi/ddraw.h>
 #include <winapi/glide2x.h>
+#include <platform/log.h>
 #include <algorithm>
 #include <atomic>
 #include <vector>
@@ -20,6 +21,23 @@ namespace win32
 
 static x86::reg32 s_resourceIndex;
 static std::atomic<int> s_resourceCount{0};
+
+// The method table doubles while methods register; about 7,800 methods end in 16,384 slots.
+static const x86::reg32 s_initialMethodSlotBits = 10;
+
+[[noreturn]] static void missingMethod(x86::reg32 address)
+{
+    pf::logError("dynamic_call: no method registered at guest address 0x%08x", address);
+    __builtin_trap();
+}
+
+// Empty slots hold address 0, so only a call to guest address 0 reaches this.
+static void callAddressZero(WinApplication* application, x86::CPU& cpu)
+{
+    NFS2_USE(application);
+    NFS2_USE(cpu);
+    missingMethod(0);
+}
 
 GenericResource::GenericResource()
     :   m_resourceIndex(0)
@@ -46,14 +64,19 @@ x86::reg32 GenericResource::getResourceIndex() const
 
 
 WinApplication::WinApplication(const char* appName, x86::reg32 baseAddress, const std::vector<Section>& sections)
-    :   m_memory(MemMap::init(baseAddress, sections))
-    ,   m_appName(new MemMap(4096))
-    ,   m_appNameW(new MemMap(4096))
-    ,   m_env(new MemMap(4096))
+    :   m_appName(nullptr)
+    ,   m_appNameW(nullptr)
+    ,   m_env(nullptr)
     ,   m_executionContext(new Mutex("ExecutionContext"))
     ,   m_resourceContext(new Mutex("Resource"))
+    ,   m_methodSlots(x86::reg32(1) << s_initialMethodSlotBits, MethodSlot{0, &callAddressZero})
+    ,   m_methodShift(32 - s_initialMethodSlotBits)
     ,   m_cpu{}
 {
+    MemMap::init(baseAddress, sections);
+    m_appName = new MemMap(4096);
+    m_appNameW = new MemMap(4096);
+    m_env = new MemMap(4096);
     dsetup::s_dSetupRegistry->registerSymbols(this);
     ddraw::s_dDrawRegistry->registerSymbols(this);
     glide2x::s_glide2xRegistry->registerSymbols(this);
@@ -194,8 +217,53 @@ void WinApplication::freeResource(x86::reg32 resource)
 
 void WinApplication::registerMethod(x86::reg32 pointer, Method method)
 {
-    NFS2_ASSERT(m_methods.find(pointer-0x400000) == m_methods.end());
-    m_methods[pointer-0x400000] = method;
+    NFS2_ASSERT(pointer != 0);
+    NFS2_ASSERT(m_methodNames.find(pointer) == m_methodNames.end());
+    m_methodNames[pointer] = std::move(method.name);
+    if (m_methodNames.size() * 2 > m_methodSlots.size())
+        growMethodTable();
+    insertMethod(pointer, method.method);
+}
+
+const char* WinApplication::getMethodName(x86::reg32 address) const
+{
+    std::unordered_map<x86::reg32, std::string>::const_iterator it = m_methodNames.find(address);
+    return it != m_methodNames.end() ? it->second.c_str() : nullptr;
+}
+
+MethodPtr WinApplication::findMethod(x86::reg32 address) const
+{
+    const x86::reg32 mask = x86::reg32(m_methodSlots.size()) - 1;
+    for (x86::reg32 i = methodSlot(address); ; i = (i + 1) & mask)
+    {
+        const MethodSlot& slot = m_methodSlots[i];
+        if (slot.address == address)
+            return slot.method;
+        if (slot.address == 0)
+            missingMethod(address);
+    }
+}
+
+// Stores at the first slot holding the address or empty.
+void WinApplication::insertMethod(x86::reg32 address, MethodPtr method)
+{
+    const x86::reg32 mask = x86::reg32(m_methodSlots.size()) - 1;
+    x86::reg32 i = methodSlot(address);
+    while (m_methodSlots[i].address != 0 && m_methodSlots[i].address != address)
+        i = (i + 1) & mask;
+    m_methodSlots[i] = MethodSlot{address, method};
+}
+
+void WinApplication::growMethodTable()
+{
+    std::vector<MethodSlot> slots(m_methodSlots.size() * 2, MethodSlot{0, &callAddressZero});
+    slots.swap(m_methodSlots);
+    --m_methodShift;
+    for (std::vector<MethodSlot>::const_iterator it = slots.begin(); it != slots.end(); ++it)
+    {
+        if (it->address)
+            insertMethod(it->address, it->method);
+    }
 }
 
 int WinApplication::runThread(x86::CPU& cpu, x86::reg32 entryPoint, x86::reg32 parameter, bool threadLock)
