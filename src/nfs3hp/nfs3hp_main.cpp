@@ -5,6 +5,9 @@
 #include <platform/gxm.h>
 #include <platform/log.h>
 #include <platform/perf.h>
+#ifdef NFS3_PROFILE
+#include <platform/prof.h>
+#endif
 #include <fpu.h>
 #include <mmx.h>
 #include <nfs3hp.h>
@@ -132,7 +135,13 @@ int main(int, char**)
             nfs3hp::widescreen::install(app);
         else
             pf::logInfo("widescreen: off");
+#ifdef NFS3_PROFILE
+        pf::prof::start(app);
+#endif
         app.execute();
+#ifdef NFS3_PROFILE
+        pf::prof::stop();
+#endif
     }
     pf::logInfo("NFS3VITA exiting");
     pf::gxm::Device::get().shutdown();
