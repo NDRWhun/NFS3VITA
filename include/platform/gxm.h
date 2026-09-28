@@ -12,8 +12,8 @@ enum
     DisplayHeight   = 544,
     MaxVertices     = 32000,
     AtlasSize       = 2048,
-    MaxSourceWidth  = 800,
-    MaxSourceHeight = 600,
+    MaxSourceWidth  = 1024,     // largest Glide resolution (grSstWinOpen)
+    MaxSourceHeight = 768,
     FrameSlots      = 2
 };
 
@@ -82,6 +82,8 @@ public:
     uint32_t* atlas() const { return m_atlas; }
     uint32_t completedFrameIndex() const;
     uint32_t recordingFrameIndex() const;
+    // Frames submitted so far; readable from any thread.
+    uint32_t submittedFrameCount() const;
 
     void setStretch(bool stretch) { m_stretch = stretch; }
     // Vita3K reads the 565 swizzle the other way round; hardware wants RGB.

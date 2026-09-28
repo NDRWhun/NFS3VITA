@@ -32,6 +32,10 @@ public:
 
     // Input pump entry points.
     static void pushKey(x86::reg32 virtualKey, x86::reg8 scancode, bool down, x86::reg32 charCode);
+    // WM_CHAR without a key message, as for IME text.
+    static void pushChar(x86::reg32 charCode);
+    // True while a posted key or character message has not been returned by getMessage yet.
+    static bool inputPending();
     static void postQuit();
     static void wake();
 

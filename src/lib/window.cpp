@@ -2,6 +2,7 @@
 #include <lib/gamepad.h>
 #include <platform/log.h>
 #include <platform/msgqueue.h>
+#include <atomic>
 #include <cstring>
 
 namespace win32
@@ -28,6 +29,14 @@ static const x86::reg32 s_inputPollMs = 16;
 
 static pf::MessageQueue s_queue;
 static WindowClass* s_class;
+static std::atomic<x86::reg32> s_inputPosted{0};  // MSG_KEY / MSG_CHAR pushed
+static std::atomic<x86::reg32> s_inputTaken{0};   // MSG_KEY / MSG_CHAR returned by getMessage
+
+static void pushInput(const pf::Message& message)
+{
+    s_inputPosted.fetch_add(1);
+    s_queue.push(message);
+}
 
 WindowClass::WindowClass(x86::reg32 windowProc)
     :   m_wndProc(windowProc)
@@ -78,11 +87,13 @@ x86::reg32 Window::getMessage(const x86::CPU& cpu, MSG* result, Window *window, 
             result->hWindow = message.window;
             return result->message != WM_QUIT;
         case MSG_KEY:
+            s_inputTaken.fetch_add(1);
             result->message = message.code ? WM_KEYDOWN : WM_KEYUP;
             result->wParam = message.data1;
             result->lParam = message.data2;
             return 1;
         case MSG_CHAR:
+            s_inputTaken.fetch_add(1);
             result->message = WM_CHAR;
             result->wParam = message.data1;
             result->lParam = message.data2;
@@ -122,14 +133,26 @@ void Window::pushKey(x86::reg32 virtualKey, x86::reg8 scancode, bool down, x86::
     m.data1 = virtualKey;
     m.data2 = 1 | (x86::reg32(scancode) << 16);
     m.window = 0;
-    s_queue.push(m);
+    pushInput(m);
     if (down && charCode)
     {
         m.type = MSG_CHAR;
         m.code = 0;
         m.data1 = charCode;
-        s_queue.push(m);
+        pushInput(m);
     }
+}
+
+void Window::pushChar(x86::reg32 charCode)
+{
+    // lParam: repeat count 1, no scancode.
+    pf::Message m = { MSG_CHAR, 0, charCode, 1, 0 };
+    pushInput(m);
+}
+
+bool Window::inputPending()
+{
+    return s_inputTaken.load() != s_inputPosted.load();
 }
 
 void Window::postQuit()

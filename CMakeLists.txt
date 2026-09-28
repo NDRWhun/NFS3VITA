@@ -94,6 +94,8 @@ target_link_libraries(NFS3VITA.elf
   SceGxm_stub
   SceDisplay_stub
   SceCtrl_stub
+  SceCommonDialog_stub
+  SceAppUtil_stub
   SceAudio_stub
   ScePower_stub
   SceRtc_stub

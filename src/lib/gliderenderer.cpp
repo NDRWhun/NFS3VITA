@@ -1,6 +1,7 @@
 #include <lib/gliderenderer.h>
 #include <lib/renderer.h>
 #include <lib/glidetmu.h>
+#include <lib/inputscript.h>
 #include <platform/gxm.h>
 #include <platform/log.h>
 #include <cstring>
@@ -53,12 +54,7 @@ pf::gxm::Frame& GlideRenderer::frame()
     }
     if (current->kind != pf::gxm::FrameGlide)
     {
-        static bool s_logged = false;
-        if (!s_logged)
-        {
-            pf::logInfo("first glide frame");
-            s_logged = true;
-        }
+        InputScript::resume();
         current->kind = pf::gxm::FrameGlide;
         current->vblanks = 1;
         current->sourceWidth = m_renderer->m_width;

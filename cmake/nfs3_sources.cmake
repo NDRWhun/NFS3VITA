@@ -2,6 +2,7 @@
 
 set(NFS3_PLATFORM_SOURCES
   src/platform/config.cpp
+  src/platform/ime.cpp
   src/platform/log.cpp
   src/platform/time.cpp
   src/platform/sync.cpp

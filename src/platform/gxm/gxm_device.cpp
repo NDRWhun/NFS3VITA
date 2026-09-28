@@ -1,4 +1,5 @@
 #include <platform/gxm.h>
+#include <platform/ime.h>
 #include <platform/log.h>
 #include <platform/sync.h>
 #include <psp2/gxm.h>
@@ -29,6 +30,7 @@ const uint32_t PatcherBufferSize    = 64 * 1024;
 const uint32_t PatcherUsseSize      = 64 * 1024;
 const uint32_t FramebufferBytes     = MaxSourceWidth * MaxSourceHeight * 2;
 const uint32_t PaletteBytes         = 256 * 4;
+const uint32_t DialogRefreshMs      = 50;   // longest wait for a game frame while a system dialog is up
 const SceUID   InvalidUid           = -1;
 
 static bool s_framebufferBgr = false; // 565 texture swizzle for Vita3K, see Device::setFramebuffer16Bgr
@@ -37,7 +39,7 @@ struct DisplayData
 {
     void*       address;
     uint32_t    vblanks;
-    uint32_t    frameIndex;
+    uint32_t    frameIndex;     // 0: dialog refresh without a game frame
 };
 
 struct QuadVertex
@@ -47,6 +49,7 @@ struct QuadVertex
 };
 
 std::atomic<uint32_t> s_completedFrameIndex{0};
+std::atomic<uint32_t> s_submittedFrames{0};
 
 uint32_t alignUp(uint32_t value, uint32_t alignment)
 {
@@ -132,7 +135,8 @@ void displayCallback(const void* data)
     frameBuffer.height = DisplayHeight;
     sceDisplaySetFrameBuf(&frameBuffer, SCE_DISPLAY_SETBUF_NEXTFRAME);
     sceDisplayWaitVblankStartMulti(display->vblanks ? display->vblanks : 1);
-    s_completedFrameIndex.store(display->frameIndex);
+    if (display->frameIndex)
+        s_completedFrameIndex.store(display->frameIndex);
 }
 
 unsigned int resourceIndex(const SceGxmProgram* program, const char* name)
@@ -165,6 +169,12 @@ struct Device::Impl
     uint32_t                frontBuffer = DisplayBuffers - 1;
     SceUID                  depthUid = InvalidUid;
     SceGxmDepthStencilSurface depthSurface;
+
+    // System dialog: copy of the last presented image without the dialog drawn over it
+    void*                   cleanData = nullptr;
+    SceUID                  cleanUid = InvalidUid;
+    SceGxmColorSurface      cleanSurface;
+    bool                    dialogShown = false;    // the front buffer has a dialog drawn over it
 
     // Shader patcher and programs
     SceGxmShaderPatcher*    patcher = nullptr;
@@ -223,9 +233,14 @@ struct Device::Impl
 
     static int threadEntry(void* self);
     void run();
+    void beginScene(SceGxmColorSurface* surface, SceGxmSyncObject* sync);
     void renderFrame(Frame& frame);
+    void renderDialogFrame();
     void drawQuad(uint32_t first, const SceGxmTexture* texture, SceGxmVertexProgram* vp, SceGxmFragmentProgram* fp, const float* color);
-    void present(Frame& frame);
+    void drawImage(void* image);
+    void* previousImage() const;
+    void finishFrame(uint32_t vblanks, uint32_t frameIndex);
+    void present(uint32_t vblanks, uint32_t frameIndex);
 };
 
 bool Device::Impl::initCore()
@@ -312,12 +327,23 @@ bool Device::Impl::initDisplay()
         }
     }
 
+    cleanData = gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, DisplayStride * DisplayHeight * 4,
+                         SCE_GXM_COLOR_SURFACE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_RW, &cleanUid);
+    int result = sceGxmColorSurfaceInit(&cleanSurface, SCE_GXM_COLOR_FORMAT_A8B8G8R8, SCE_GXM_COLOR_SURFACE_LINEAR,
+                                        SCE_GXM_COLOR_SURFACE_SCALE_NONE, SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT,
+                                        DisplayWidth, DisplayHeight, DisplayStride, cleanData);
+    if (result < 0)
+    {
+        logError("sceGxmColorSurfaceInit (dialog copy) failed: 0x%08x", result);
+        return false;
+    }
+
     const uint32_t depthStride = alignUp(DisplayWidth, SCE_GXM_TILE_SIZEX);
     const uint32_t depthHeight = alignUp(DisplayHeight, SCE_GXM_TILE_SIZEY);
     void* depthData = gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, depthStride * depthHeight * 4,
                                SCE_GXM_DEPTHSTENCIL_SURFACE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_RW, &depthUid);
-    int result = sceGxmDepthStencilSurfaceInit(&depthSurface, SCE_GXM_DEPTH_STENCIL_FORMAT_DF32,
-                                               SCE_GXM_DEPTH_STENCIL_SURFACE_TILED, depthStride, depthData, nullptr);
+    result = sceGxmDepthStencilSurfaceInit(&depthSurface, SCE_GXM_DEPTH_STENCIL_FORMAT_DF32,
+                                           SCE_GXM_DEPTH_STENCIL_SURFACE_TILED, depthStride, depthData, nullptr);
     if (result < 0)
     {
         logError("sceGxmDepthStencilSurfaceInit failed: 0x%08x", result);
@@ -530,7 +556,21 @@ void Device::Impl::run()
 {
     while (true)
     {
-        readySlots.wait();
+        if (ime::pending())
+        {
+            // A system dialog needs frames even while the game submits none.
+            if (!readySlots.waitFor(DialogRefreshMs))
+            {
+                if (!running)
+                    break;
+                renderDialogFrame();
+                continue;
+            }
+        }
+        else
+        {
+            readySlots.wait();
+        }
         if (!running)
             break;
         Frame& frame = frames[renderSlot];
@@ -538,6 +578,15 @@ void Device::Impl::run()
         renderSlot = (renderSlot + 1) % FrameSlots;
         freeSlots.post();
     }
+}
+
+void Device::Impl::beginScene(SceGxmColorSurface* surface, SceGxmSyncObject* sync)
+{
+    sceGxmBeginScene(context, 0, renderTarget, nullptr, nullptr, sync, surface, &depthSurface);
+    sceGxmSetViewportEnable(context, SCE_GXM_VIEWPORT_ENABLED);
+    sceGxmSetViewport(context, 0.5f * DisplayWidth, 0.5f * DisplayWidth, 0.5f * DisplayHeight, -0.5f * DisplayHeight, 0.0f, 1.0f);
+    sceGxmSetRegionClip(context, SCE_GXM_REGION_CLIP_NONE, 0, 0, DisplayWidth - 1, DisplayHeight - 1);
+    sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
 }
 
 void Device::Impl::drawQuad(uint32_t first, const SceGxmTexture* texture, SceGxmVertexProgram* vp, SceGxmFragmentProgram* fp, const float* color)
@@ -560,19 +609,33 @@ void Device::Impl::drawQuad(uint32_t first, const SceGxmTexture* texture, SceGxm
     sceGxmDraw(context, SCE_GXM_PRIMITIVE_TRIANGLE_STRIP, SCE_GXM_INDEX_FORMAT_U16, quadIndices, 4);
 }
 
+// Copies a display-sized ABGR image over the whole target.
+void Device::Impl::drawImage(void* image)
+{
+    SceGxmTexture texture;
+    sceGxmTextureInitLinear(&texture, image, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR, DisplayWidth, DisplayHeight, 1);
+    sceGxmTextureSetMinFilter(&texture, SCE_GXM_TEXTURE_FILTER_POINT);
+    sceGxmTextureSetMagFilter(&texture, SCE_GXM_TEXTURE_FILTER_POINT);
+    drawQuad(0, &texture, blitV, blitF, nullptr);
+}
+
+// The last presented image without a system dialog over it.
+void* Device::Impl::previousImage() const
+{
+    return dialogShown ? cleanData : displayData[frontBuffer];
+}
+
 void Device::Impl::renderFrame(Frame& frame)
 {
     if (frame.kind == FrameEmpty)
     {
         s_completedFrameIndex.store(frame.frameIndex);
+        if (ime::pending())
+            renderDialogFrame();
         return;
     }
 
-    sceGxmBeginScene(context, 0, renderTarget, nullptr, nullptr, displaySync[backBuffer], &colorSurface[backBuffer], &depthSurface);
-    sceGxmSetViewportEnable(context, SCE_GXM_VIEWPORT_ENABLED);
-    sceGxmSetViewport(context, 0.5f * DisplayWidth, 0.5f * DisplayWidth, 0.5f * DisplayHeight, -0.5f * DisplayHeight, 0.0f, 1.0f);
-    sceGxmSetRegionClip(context, SCE_GXM_REGION_CLIP_NONE, 0, 0, DisplayWidth - 1, DisplayHeight - 1);
-    sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
+    beginScene(&colorSurface[backBuffer], displaySync[backBuffer]);
 
     static const float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
@@ -607,11 +670,7 @@ void Device::Impl::renderFrame(Frame& frame)
         else
         {
             // No clear: keep drawing over the previously displayed frame.
-            SceGxmTexture previous;
-            sceGxmTextureInitLinear(&previous, displayData[frontBuffer], SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR, DisplayWidth, DisplayHeight, 1);
-            sceGxmTextureSetMinFilter(&previous, SCE_GXM_TEXTURE_FILTER_POINT);
-            sceGxmTextureSetMagFilter(&previous, SCE_GXM_TEXTURE_FILTER_POINT);
-            drawQuad(0, &previous, blitV, blitF, nullptr);
+            drawImage(previousImage());
         }
 
         if (frame.vertexCount)
@@ -651,16 +710,41 @@ void Device::Impl::renderFrame(Frame& frame)
     }
 
     sceGxmEndScene(context, nullptr, nullptr);
-    present(frame);
+    finishFrame(frame.vblanks, frame.frameIndex);
 }
 
-void Device::Impl::present(Frame& frame)
+// Re-presents the last image so a system dialog keeps updating while no game frame arrives.
+void Device::Impl::renderDialogFrame()
+{
+    beginScene(&colorSurface[backBuffer], displaySync[backBuffer]);
+    drawImage(previousImage());
+    sceGxmEndScene(context, nullptr, nullptr);
+    finishFrame(1, 0);
+}
+
+// Draws a running system dialog over the finished scene, then queues the back buffer for display.
+void Device::Impl::finishFrame(uint32_t vblanks, uint32_t frameIndex)
+{
+    dialogShown = ime::prepareFrame();
+    if (dialogShown)
+    {
+        // Dialog-free copy for the next frame that draws over the previous image. The back buffer's sync
+        // object makes the dialog draw after this copy has read the buffer.
+        beginScene(&cleanSurface, displaySync[backBuffer]);
+        drawImage(displayData[backBuffer]);
+        sceGxmEndScene(context, nullptr, nullptr);
+        ime::drawFrame(displayData[backBuffer], DisplayWidth, DisplayHeight, DisplayStride, displaySync[backBuffer]);
+    }
+    present(vblanks, frameIndex);
+}
+
+void Device::Impl::present(uint32_t vblanks, uint32_t frameIndex)
 {
     sceGxmPadHeartbeat(&colorSurface[backBuffer], displaySync[backBuffer]);
     DisplayData data;
     data.address = displayData[backBuffer];
-    data.vblanks = frame.vblanks;
-    data.frameIndex = frame.frameIndex;
+    data.vblanks = vblanks;
+    data.frameIndex = frameIndex;
     sceGxmDisplayQueueAddEntry(displaySync[frontBuffer], displaySync[backBuffer], &data);
     frontBuffer = backBuffer;
     backBuffer = (backBuffer + 1) % DisplayBuffers;
@@ -721,6 +805,7 @@ void Device::shutdown()
         delete impl.thread;
         impl.thread = nullptr;
     }
+    ime::shutdown();
     if (impl.context)
     {
         sceGxmFinish(impl.context);
@@ -758,6 +843,7 @@ void Device::shutdown()
         if (impl.displaySync[i]) sceGxmSyncObjectDestroy(impl.displaySync[i]);
         gpuFree(impl.displayUid[i]);
     }
+    gpuFree(impl.cleanUid);
     gpuFree(impl.depthUid);
     if (impl.renderTarget) sceGxmDestroyRenderTarget(impl.renderTarget);
     if (impl.context) sceGxmDestroyContext(impl.context);
@@ -806,12 +892,18 @@ void Device::submitFrame()
         return;
     impl.frameAcquired = false;
     impl.acquireSlot = (impl.acquireSlot + 1) % FrameSlots;
+    s_submittedFrames.fetch_add(1);
     impl.readySlots.post();
 }
 
 uint32_t Device::completedFrameIndex() const
 {
     return s_completedFrameIndex.load();
+}
+
+uint32_t Device::submittedFrameCount() const
+{
+    return s_submittedFrames.load();
 }
 
 void Device::setFramebuffer16Bgr(bool bgr)

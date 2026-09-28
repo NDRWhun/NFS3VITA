@@ -4,6 +4,7 @@
 #include <winapi/wrapper.h>
 #include <lib/audio.h>
 #include <lib/thread.h>
+#include <algorithm>
 
 
 namespace win32 { namespace dsound
@@ -22,6 +23,9 @@ struct WAVEFORMATEX
     WORD  cbSize;
 };
 
+// Guest size of WAVEFORMATEX (byte packed, no tail padding).
+static const DWORD s_waveFormatSize = 18;
+
 struct IDirectSoundBuffer::DSBCAPS
 {
     DWORD dwSize;
@@ -31,27 +35,6 @@ struct IDirectSoundBuffer::DSBCAPS
     DWORD dwPlayCpuOverhead;
 };
 
-enum DirectSoundBufferFlags
-{
-    DSBCAPS_PRIMARYBUFFER         = 0x00000001,
-    DSBCAPS_STATIC                = 0x00000002,
-    DSBCAPS_LOCHARDWARE           = 0x00000004,
-    DSBCAPS_LOCSOFTWARE           = 0x00000008,
-    DSBCAPS_CTRL3D                = 0x00000010,
-    DSBCAPS_CTRLFREQUENCY         = 0x00000020,
-    DSBCAPS_CTRLPAN               = 0x00000040,
-    DSBCAPS_CTRLVOLUME            = 0x00000080,
-    DSBCAPS_CTRLDEFAULT           = 0x000000E0,  /* Pan + volume + frequency. */
-    DSBCAPS_CTRLPOSITIONNOTIFY    = 0x00000100,
-    DSBCAPS_CTRLFX                = 0x00000200,
-    DSBCAPS_CTRLALL               = 0x000001F0,  /* All control capabilities */
-    DSBCAPS_STICKYFOCUS           = 0x00004000,
-    DSBCAPS_GLOBALFOCUS           = 0x00008000,
-    DSBCAPS_GETCURRENTPOSITION2   = 0x00010000,  /* More accurate play cursor under emulation*/
-    DSBCAPS_MUTE3DATMAXDISTANCE   = 0x00020000,
-    DSBCAPS_LOCDEFER              = 0x00040000
-};
-
 enum DirectSoundBufferStatus
 {
     DSBSTATUS_PLAYING         = 0x00000001,
@@ -59,16 +42,79 @@ enum DirectSoundBufferStatus
     DSBSTATUS_LOOPING         = 0x00000004
 };
 
+enum DirectSoundConstants
+{
+    WAVE_FORMAT_PCM           = 1,
+    DSBPLAY_LOOPING           = 0x00000001,
+    DSBLOCK_FROMWRITECURSOR   = 0x00000001,
+    DSBLOCK_ENTIREBUFFER      = 0x00000002,
+    DSBSIZE_MIN               = 4,
+    DSBSIZE_MAX               = 0x0FFFFFFF,
+    DSBFREQUENCY_ORIGINAL     = 0,
+    DSBFREQUENCY_MIN          = 100,
+    DSBFREQUENCY_MAX          = 100000,
+    DSBVOLUME_MIN             = -10000,
+    DSBVOLUME_MAX             = 0,
+    DSBPAN_LEFT               = -10000,
+    DSBPAN_RIGHT              = 10000
+};
+
 DEFINE_GUID(IID_IDirectSoundBuffer,	0x279AFA85,0x4981,0x11CE,0xA5,0x21,0x00,0x20,0xAF,0x0B,0xE5,0x60);
 DEFINE_GUID(IID_IDirectSound3DListener, 0x279AFA84,0x4981,0x11CE,0xA5,0x21,0x00,0x20,0xAF,0x0B,0xE5,0x60);
 
+// Accepts PCM with 1-2 channels of 8 or 16 bits.
+static HRESULT readWaveFormat(LPCWAVEFORMATEX lpwfxFormat, AudioFormat* format)
+{
+    const x86::reg32 channels = lpwfxFormat->nChannels;
+    const x86::reg32 bits = lpwfxFormat->wBitsPerSample;
+    const x86::reg32 rate = lpwfxFormat->nSamplesPerSec;
+    if (lpwfxFormat->wFormatTag != WAVE_FORMAT_PCM
+        || (channels != 1 && channels != 2)
+        || (bits != 8 && bits != 16)
+        || rate < DSBFREQUENCY_MIN || rate > DSBFREQUENCY_MAX
+        || lpwfxFormat->nBlockAlign != channels * bits / 8)
+        return DSERR_BADFORMAT;
+    format->channels = channels;
+    format->bitsPerSample = bits;
+    format->sampleRate = rate;
+    return DS_OK;
+}
 
-IDirectSoundBuffer::IDirectSoundBuffer(WinApplication* app, x86::CPU& cpu, LPDIRECTSOUND lpDirectSound, LPCDSBUFFERDESC lpcDSBufferDesc)
+HRESULT IDirectSoundBuffer::readDescription(WinApplication* app, LPCDSBUFFERDESC lpcDSBufferDesc, AudioFormat* format, DWORD* bufferBytes)
+{
+    if (!lpcDSBufferDesc || lpcDSBufferDesc->dwSize != sizeof(DSBUFFERDESC))
+        return DSERR_INVALIDPARAM;
+    if (lpcDSBufferDesc->dwFlags & DSBCAPS_PRIMARYBUFFER)
+    {
+        *format = AudioDevice::s_outputFormat;
+        *bufferBytes = AudioBuffer::s_primaryBufferBytes;
+        return DS_OK;
+    }
+    if (!lpcDSBufferDesc->lpwfxFormat)
+        return DSERR_INVALIDPARAM;
+    const HRESULT result = readWaveFormat(&app->getMemory<WAVEFORMATEX>(lpcDSBufferDesc->lpwfxFormat), format);
+    if (result != DS_OK)
+        return result;
+    const DWORD bytes = lpcDSBufferDesc->dwBufferBytes;
+    if (bytes < DSBSIZE_MIN || bytes > DSBSIZE_MAX)
+        return DSERR_INVALIDPARAM;
+    // Rounded up to whole frames.
+    const DWORD frameBytes = format->frameBytes();
+    *bufferBytes = (bytes + frameBytes - 1) / frameBytes * frameBytes;
+    return DS_OK;
+}
+
+IDirectSoundBuffer::IDirectSoundBuffer(WinApplication* app, AudioDevice* device, DWORD bufferBytes, const AudioFormat& format, bool primary)
     :   IUnknown(IID_IDirectSoundBuffer)
 {
-    NFS2_ASSERT(lpcDSBufferDesc->dwSize == sizeof(DSBUFFERDESC));
     m_vtable = s_iDirectSoundBufferVtable;
-    Initialize(app, cpu, lpDirectSound, lpcDSBufferDesc);
+    m_resource = new AudioBuffer(device, app, bufferBytes, format, primary);
+    app->allocateResource(m_resource);
+}
+
+AudioBuffer* IDirectSoundBuffer::buffer() const
+{
+    return static_cast<AudioBuffer*>(m_resource);
 }
 
 BOOL IDirectSoundBuffer::QueryInterface(WinApplication* app, x86::CPU& cpu,
@@ -101,87 +147,115 @@ HRESULT IDirectSoundBuffer::GetCaps(WinApplication* app, x86::CPU& cpu, LPDSBCAP
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_ASSERT(lpDSBufferCaps->dwSize == sizeof(DSBCAPS));
+    if (!lpDSBufferCaps || lpDSBufferCaps->dwSize != sizeof(DSBCAPS))
+        return DSERR_INVALIDPARAM;
     lpDSBufferCaps->dwFlags = DSBCAPS_GETCURRENTPOSITION2|DSBCAPS_CTRLALL;
-    if (dynamic_cast<AudioBuffer*>(m_resource)->primary())
+    if (buffer()->primary())
         lpDSBufferCaps->dwFlags |= DSBCAPS_LOCHARDWARE;
     else
         lpDSBufferCaps->dwFlags |= DSBCAPS_LOCSOFTWARE;
-    lpDSBufferCaps->dwBufferBytes = dynamic_cast<AudioBuffer*>(m_resource)->bufferSize();
+    lpDSBufferCaps->dwBufferBytes = buffer()->bufferSize();
     lpDSBufferCaps->dwUnlockTransferRate = 0;
     lpDSBufferCaps->dwPlayCpuOverhead = 0;
-    return 0;
+    return DS_OK;
 }
 
+// Both cursors are the next byte the mixer reads; everything before it has been mixed.
 HRESULT IDirectSoundBuffer::GetCurrentPosition(WinApplication* app, x86::CPU& cpu, LPDWORD lpdwCurrentPlayCursor, LPDWORD lpdwCurrentWriteCursor)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
+    const x86::reg32 position = buffer()->position();
     if (lpdwCurrentPlayCursor)
-        *lpdwCurrentPlayCursor = dynamic_cast<AudioBuffer*>(m_resource)->playStart() % dynamic_cast<AudioBuffer*>(m_resource)->bufferSize();
+        *lpdwCurrentPlayCursor = position;
     if (lpdwCurrentWriteCursor)
-        *lpdwCurrentWriteCursor = dynamic_cast<AudioBuffer*>(m_resource)->playStart() % dynamic_cast<AudioBuffer*>(m_resource)->bufferSize();
-    return 0;
+        *lpdwCurrentWriteCursor = position;
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::GetFormat(WinApplication* app, x86::CPU& cpu, LPWAVEFORMATEX lpwfxFormat, DWORD dwSizeAllocated, LPDWORD lpdwSizeWritten)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(lpdwSizeWritten);
-    NFS2_USE(dwSizeAllocated);
-    NFS2_USE(lpwfxFormat);
-    NFS2_ASSERT(false);
-    return 1;
+    if (!lpwfxFormat)
+    {
+        if (!lpdwSizeWritten)
+            return DSERR_INVALIDPARAM;
+        *lpdwSizeWritten = s_waveFormatSize;
+        return DS_OK;
+    }
+    if (dwSizeAllocated < s_waveFormatSize)
+    {
+        if (lpdwSizeWritten)
+            *lpdwSizeWritten = 0;
+        return DSERR_INVALIDPARAM;
+    }
+    const AudioFormat& format = buffer()->format();
+    lpwfxFormat->wFormatTag = WAVE_FORMAT_PCM;
+    lpwfxFormat->nChannels = WORD(format.channels);
+    lpwfxFormat->nSamplesPerSec = format.sampleRate;
+    lpwfxFormat->nAvgBytesPerSec = format.sampleRate * format.frameBytes();
+    lpwfxFormat->nBlockAlign = WORD(format.frameBytes());
+    lpwfxFormat->wBitsPerSample = WORD(format.bitsPerSample);
+    lpwfxFormat->cbSize = 0;
+    if (lpdwSizeWritten)
+        *lpdwSizeWritten = s_waveFormatSize;
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::GetVolume(WinApplication* app, x86::CPU& cpu, LPLONG lplVolume)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(lplVolume);
-    NFS2_ASSERT(false);
-    return 1;
+    if (!lplVolume)
+        return DSERR_INVALIDPARAM;
+    *lplVolume = buffer()->volume();
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::GetPan(WinApplication* app, x86::CPU& cpu, LPLONG lplpan)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(lplpan);
-    NFS2_ASSERT(false);
-    return 1;
+    if (!lplpan)
+        return DSERR_INVALIDPARAM;
+    *lplpan = buffer()->pan();
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::GetFrequency(WinApplication* app, x86::CPU& cpu, LPDWORD lpdwFrequency)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(lpdwFrequency);
-    NFS2_ASSERT(false);
-    return 1;
+    if (!lpdwFrequency)
+        return DSERR_INVALIDPARAM;
+    if (buffer()->primary())
+        return DSERR_CONTROLUNAVAIL;
+    *lpdwFrequency = buffer()->frequency();
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::GetStatus(WinApplication* app, x86::CPU& cpu, LPDWORD lpdwStatus)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    if (dynamic_cast<AudioBuffer*>(m_resource)->playStart() < dynamic_cast<AudioBuffer*>(m_resource)->playStop())
-        *lpdwStatus = DSBSTATUS_PLAYING;
-    else
-        *lpdwStatus = 0;
-    return 0;
+    if (!lpdwStatus)
+        return DSERR_INVALIDPARAM;
+    DWORD status = 0;
+    if (buffer()->playing())
+        status = buffer()->looping() ? DSBSTATUS_PLAYING|DSBSTATUS_LOOPING : DSBSTATUS_PLAYING;
+    *lpdwStatus = status;
+    return DS_OK;
 }
 
+// Buffers are initialised by IDirectSound::CreateSoundBuffer.
 HRESULT IDirectSoundBuffer::Initialize(WinApplication* app, x86::CPU& cpu, LPDIRECTSOUND lpDirectSound, LPCDSBUFFERDESC lpcDSBufferDesc)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(lpDirectSound);
     NFS2_USE(lpcDSBufferDesc);
-    m_resource = new AudioBuffer(dynamic_cast<AudioDevice*>(lpDirectSound->m_resource), app, lpcDSBufferDesc->dwBufferBytes);
-    app->allocateResource(m_resource);
-    return 0;
+    return DSERR_ALREADYINITIALIZED;
 }
 
 HRESULT IDirectSoundBuffer::Lock(WinApplication* app, x86::CPU& cpu, DWORD dwOffset, DWORD dwBytes,
@@ -189,39 +263,23 @@ HRESULT IDirectSoundBuffer::Lock(WinApplication* app, x86::CPU& cpu, DWORD dwOff
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_ASSERT(dwFlags == 0);
-    AudioBuffer* buffer = dynamic_cast<AudioBuffer*>(m_resource);
-    x86::reg32 bufferSize = buffer->bufferSize();
-    NFS2_ASSERT(dwBytes <= bufferSize);
-    /**ppvAudioPtr1 = Packed<void>(buffer->getBackBuffer());
-    *pdwAudioBytes1 = dwBytes;*/
-    x86::reg32 start = dwOffset;
-    x86::reg32 stop = dwOffset + dwBytes;
-    if (dwBytes == bufferSize)
-    {
-        NFS2_ASSERT(dwOffset == 0);
-    }
-    x86::reg32 mem = buffer->lock();
-    *ppvAudioPtr1 = Packed<void>(mem + start);
-    if (stop <= bufferSize)
-    {
-        *pdwAudioBytes1 = stop - start;
-        if (ppvAudioPtr2)
-        {
-            *ppvAudioPtr2 = Packed<void>();
-            *pdwAudioBytes2 = 0;
-        }
-    }
-    else
-    {
-        *pdwAudioBytes1 = bufferSize - start;
-        if (ppvAudioPtr2)
-        {
-            *ppvAudioPtr2 = Packed<void>(mem);
-            *pdwAudioBytes2 = stop - bufferSize;
-        }
-    }
-    return 0;
+    AudioBuffer* audio = buffer();
+    const x86::reg32 bufferSize = audio->bufferSize();
+    if (dwFlags & DSBLOCK_FROMWRITECURSOR)
+        dwOffset = audio->position();
+    if (dwFlags & DSBLOCK_ENTIREBUFFER)
+        dwBytes = bufferSize;
+    if (!ppvAudioPtr1 || !pdwAudioBytes1 || dwOffset >= bufferSize || dwBytes > bufferSize)
+        return DSERR_INVALIDPARAM;
+    const x86::reg32 memory = audio->lock();
+    const x86::reg32 firstBytes = std::min(dwBytes, bufferSize - dwOffset);
+    *ppvAudioPtr1 = Packed<void>(memory + dwOffset);
+    *pdwAudioBytes1 = firstBytes;
+    if (ppvAudioPtr2)
+        *ppvAudioPtr2 = Packed<void>(dwBytes > firstBytes ? memory : 0);
+    if (pdwAudioBytes2)
+        *pdwAudioBytes2 = ppvAudioPtr2 ? dwBytes - firstBytes : 0;
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::Play(WinApplication* app, x86::CPU& cpu, DWORD dwReserved1, DWORD dwReserved2, DWORD dwFlags)
@@ -230,61 +288,76 @@ HRESULT IDirectSoundBuffer::Play(WinApplication* app, x86::CPU& cpu, DWORD dwRes
     NFS2_USE(cpu);
     NFS2_USE(dwReserved1);
     NFS2_USE(dwReserved2);
-    NFS2_USE(dwFlags);
-    dynamic_cast<AudioBuffer*>(m_resource)->play();
-    return 0;
+    buffer()->play((dwFlags & DSBPLAY_LOOPING) != 0);
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::SetCurrentPosition(WinApplication* app, x86::CPU& cpu, DWORD dwNewPosition)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(dwNewPosition);
-    NFS2_ASSERT(false);
-    return 1;
+    if (buffer()->primary())
+        return DSERR_INVALIDCALL;
+    if (dwNewPosition >= buffer()->bufferSize())
+        return DSERR_INVALIDPARAM;
+    buffer()->setPosition(dwNewPosition);
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::SetFormat(WinApplication* app, x86::CPU& cpu, LPCWAVEFORMATEX lpcfxFormat)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(lpcfxFormat);
-    return 0;
+    if (!buffer()->primary())
+        return DSERR_INVALIDCALL;
+    if (!lpcfxFormat)
+        return DSERR_INVALIDPARAM;
+    AudioFormat format;
+    const HRESULT result = readWaveFormat(lpcfxFormat, &format);
+    if (result != DS_OK)
+        return result;
+    buffer()->setFormat(format);
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::SetVolume(WinApplication* app, x86::CPU& cpu, LONG lVolume)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(lVolume);
-    NFS2_ASSERT(false);
-    return 1;
+    if (lVolume < DSBVOLUME_MIN || lVolume > DSBVOLUME_MAX)
+        return DSERR_INVALIDPARAM;
+    buffer()->setVolume(lVolume);
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::SetPan(WinApplication* app, x86::CPU& cpu, LONG lPan)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(lPan);
-    NFS2_ASSERT(false);
-    return 1;
+    if (lPan < DSBPAN_LEFT || lPan > DSBPAN_RIGHT)
+        return DSERR_INVALIDPARAM;
+    buffer()->setPan(lPan);
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::SetFrequency(WinApplication* app, x86::CPU& cpu, DWORD dwFrequency)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(dwFrequency);
-    NFS2_ASSERT(false);
-    return 1;
+    if (buffer()->primary())
+        return DSERR_CONTROLUNAVAIL;
+    if (dwFrequency != DSBFREQUENCY_ORIGINAL && (dwFrequency < DSBFREQUENCY_MIN || dwFrequency > DSBFREQUENCY_MAX))
+        return DSERR_INVALIDPARAM;
+    buffer()->setFrequency(dwFrequency);
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::Stop(WinApplication* app, x86::CPU& cpu)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    dynamic_cast<AudioBuffer*>(m_resource)->stop();
-    return 0;
+    buffer()->stop();
+    return DS_OK;
 }
 
 HRESULT IDirectSoundBuffer::Unlock(WinApplication* app, x86::CPU& cpu, Packed<void> pvAudioPtr1, DWORD dwAudioBytes1, Packed<void> pvAudioPtr2, DWORD dwAudioBytes2)
@@ -292,19 +365,19 @@ HRESULT IDirectSoundBuffer::Unlock(WinApplication* app, x86::CPU& cpu, Packed<vo
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(pvAudioPtr1);
+    NFS2_USE(dwAudioBytes1);
     NFS2_USE(pvAudioPtr2);
-    AudioBuffer* buffer = dynamic_cast<AudioBuffer*>(m_resource);
-    //NFS2_ASSERT(pvAudioPtr1 - buffer->lock() == buffer->playStop() % buffer->bufferSize());
-    buffer->unlock(dwAudioBytes1 + dwAudioBytes2);
-    return 0;
+    NFS2_USE(dwAudioBytes2);
+    buffer()->unlock();
+    return DS_OK;
 }
 
+// Buffer memory is never lost.
 HRESULT IDirectSoundBuffer::Restore(WinApplication* app, x86::CPU& cpu)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_ASSERT(false);
-    return 1;
+    return DS_OK;
 }
 
 x86::reg32 IDirectSoundBuffer::init(WinApplication *app, x86::reg32 memblockIndex, x86::reg8* memBlock)

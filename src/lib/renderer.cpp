@@ -2,6 +2,7 @@
 #include <lib/window.h>
 #include <lib/gamepad.h>
 #include <lib/gliderenderer.h>
+#include <lib/inputscript.h>
 #include <platform/gxm.h>
 #include <platform/log.h>
 #include <cstring>
@@ -39,7 +40,7 @@ static void dumpFrame(const void* pixels, x86::reg32 bytes)
 Renderer::Renderer(WinApplication* application, Window *window)
     :   m_application(application)
     ,   m_window(window)
-    ,   m_videoMemory(new MemMap(pf::gxm::MaxSourceWidth * pf::gxm::MaxSourceHeight * 2 * 2)) // double buffer 16 bits 800x600
+    ,   m_videoMemory(new MemMap(pf::gxm::MaxSourceWidth * pf::gxm::MaxSourceHeight * 2 * 2)) // double buffer 16 bits
     ,   m_currentBuffer(0)
     ,   m_width(640)
     ,   m_height(480)
@@ -93,6 +94,7 @@ void Renderer::present()
 // Presents the guest front buffer.
 void Renderer::update(x86::reg32 vblanks)
 {
+    InputScript::pause();
     pf::gxm::Device& device = pf::gxm::Device::get();
     pf::gxm::Frame* pending = device.currentFrame();
     if (pending && pending->kind == pf::gxm::FrameGlide)

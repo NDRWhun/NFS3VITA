@@ -1,6 +1,9 @@
 #include <lib/gamepad.h>
 #include <lib/inputscript.h>
 #include <lib/window.h>
+#include <platform/gxm.h>
+#include <platform/ime.h>
+#include <platform/sync.h>
 #include <psp2/ctrl.h>
 #include <cstring>
 
@@ -37,10 +40,24 @@ static const KeyCode s_keyLeft   = { 0x25, 0x4B, 0 };
 static const KeyCode s_keyUp     = { 0x26, 0x48, 0 };
 static const KeyCode s_keyRight  = { 0x27, 0x4D, 0 };
 static const KeyCode s_keyDown   = { 0x28, 0x50, 0 };
+static const KeyCode s_keyDelete = { 0x2E, 0x53, 0 };   // clears a frontend text field
 
+// Frames between typed keys: the frontend reads one key per frame and drops a key equal to the
+// previous one unless a frame without a key came in between.
+static const uint32_t s_framesPerKey = 4;
+
+// updateKeys() runs on the message thread and the game thread; s_keysMutex guards everything below.
+static pf::Mutex    s_keysMutex("nfs3_pad_keys", false);
 static x86::reg32   s_kbPoll = 3;
 static GamepadState s_state;
 static Gamepad*     s_gp1;
+
+// Confirmed IME text being typed into the game.
+static char         s_typeText[pf::ime::MaxTextLength + 1];
+static x86::reg32   s_typeNext;
+static bool         s_typeClear;
+static bool         s_typing;
+static uint32_t     s_typeFrame;
 
 static x86::sreg16 stickAxis(unsigned char raw)
 {
@@ -89,6 +106,12 @@ static GamepadState readPad()
     return state;
 }
 
+// Triangle opens the IME instead of posting a key; the d-pad is folded into the axes.
+static bool buttonHasKey(x86::reg32 button)
+{
+    return button < PadUp && button != PadTriangle;
+}
+
 static const KeyCode& buttonKey(x86::reg32 button)
 {
     switch (button)
@@ -113,8 +136,69 @@ static void axisKeys(x86::sreg16 previous, x86::sreg16 current, const KeyCode& n
         Window::pushKey(negative.vk, negative.scancode, true, 0);
 }
 
+// Posts key-ups for everything still held in menu mode and forgets the pad state.
+static void releaseKeys()
+{
+    for (x86::reg32 button = 0; button < PadUp; ++button)
+    {
+        if (buttonHasKey(button) && (s_state.buttons & (x86::reg64(1) << button)))
+        {
+            const KeyCode& key = buttonKey(button);
+            Window::pushKey(key.vk, key.scancode, false, 0);
+        }
+    }
+    axisKeys(s_state.axes[0], 0, s_keyLeft, s_keyRight);
+    axisKeys(s_state.axes[1], 0, s_keyUp, s_keyDown);
+    memset(&s_state, 0, sizeof(s_state));
+}
+
+// Types confirmed IME text: Delete empties the frontend text field, then one WM_CHAR per character.
+// A key is posted once the previous one has left the message queue and s_framesPerKey frames passed.
+static void typeText()
+{
+    const uint32_t frames = pf::gxm::Device::get().submittedFrameCount();
+    if (!s_typing)
+    {
+        if (!pf::ime::takeText(s_typeText, sizeof(s_typeText)))
+            return;
+        s_typing = true;
+        s_typeClear = true;
+        s_typeNext = 0;
+        s_typeFrame = frames - s_framesPerKey;
+    }
+    if (Window::inputPending())
+    {
+        s_typeFrame = frames;
+        return;
+    }
+    if (frames - s_typeFrame < s_framesPerKey)
+        return;
+    s_typeFrame = frames;
+    if (s_typeClear)
+    {
+        Window::pushKey(s_keyDelete.vk, s_keyDelete.scancode, true, 0);
+        Window::pushKey(s_keyDelete.vk, s_keyDelete.scancode, false, 0);
+        s_typeClear = false;
+    }
+    else if (s_typeText[s_typeNext])
+    {
+        Window::pushChar(x86::reg8(s_typeText[s_typeNext++]));
+    }
+    else
+    {
+        s_typing = false;
+    }
+}
+
+// The IME dialog is open or its text is still being typed.
+static bool imeOwnsPad()
+{
+    return s_typing || pf::ime::active();
+}
+
 void Input::poll()
 {
+    pf::LockGuard lock(s_keysMutex);
     s_kbPoll = 3;
 }
 
@@ -136,17 +220,27 @@ void Gamepad::pushNamedKey(const char* name, bool down)
 
 void Gamepad::updateKeys()
 {
+    pf::LockGuard lock(s_keysMutex);
     InputScript::update();
+    typeText();
     if (s_kbPoll == 0)
     {
         GamepadState state = readPad();
+        const x86::reg64 triangle = x86::reg64(1) << PadTriangle;
+        if (!imeOwnsPad() && (state.buttons & triangle) && !(s_state.buttons & triangle) && pf::ime::requestOpen())
+            releaseKeys();
+        if (imeOwnsPad())
+        {
+            // Follow the pad without posting keys, so buttons held when the dialog closes post no key press.
+            s_state = state;
+            return;
+        }
         axisKeys(s_state.axes[0], state.axes[0], s_keyLeft, s_keyRight);
         axisKeys(s_state.axes[1], state.axes[1], s_keyUp, s_keyDown);
-        // D-pad buttons are already folded into the axes; skip them here.
         for (x86::reg32 button = 0; button < PadUp; ++button)
         {
             x86::reg64 mask = x86::reg64(1) << button;
-            if ((s_state.buttons & mask) != (state.buttons & mask))
+            if (buttonHasKey(button) && (s_state.buttons & mask) != (state.buttons & mask))
             {
                 const KeyCode& key = buttonKey(button);
                 bool down = (state.buttons & mask) != 0;
@@ -158,18 +252,7 @@ void Gamepad::updateKeys()
     else
     {
         // The game is polling DirectInput: release any keys still held from menu mode.
-        for (x86::reg32 button = 0; button < PadUp; ++button)
-        {
-            x86::reg64 mask = x86::reg64(1) << button;
-            if (s_state.buttons & mask)
-            {
-                const KeyCode& key = buttonKey(button);
-                Window::pushKey(key.vk, key.scancode, false, 0);
-            }
-        }
-        axisKeys(s_state.axes[0], 0, s_keyLeft, s_keyRight);
-        axisKeys(s_state.axes[1], 0, s_keyUp, s_keyDown);
-        memset(&s_state, 0, sizeof(s_state));
+        releaseKeys();
         s_kbPoll--;
     }
 }

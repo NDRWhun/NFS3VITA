@@ -53,28 +53,50 @@ enum DirectSoundCaps
 };
 
 static x86::reg32 s_primaryBuffer = 0;
+static AudioDevice* s_device = nullptr;
 
 DEFINE_GUID(IID_IDirectSound,           0x279AFA83,0x4981,0x11CE,0xA5,0x21,0x00,0x20,0xAF,0x0B,0xE5,0x60);
+
+// One output port and mixer shared by every IDirectSound object.
+static AudioDevice* sharedDevice(WinApplication* app)
+{
+    if (!s_device)
+    {
+        s_device = new AudioDevice();
+        app->allocateResource(s_device);
+    }
+    return s_device;
+}
 
 IDirectSound::IDirectSound()
     :   IUnknown(IID_IDirectSound)
 {
     m_vtable = s_iDirectSoundVtable;
+    m_resource = nullptr;
 }
 
 HRESULT IDirectSound::CreateSoundBuffer(WinApplication* app, x86::CPU& cpu,
                                        LPCDSBUFFERDESC lpcDSBufferDesc, LPLPDIRECTSOUNDBUFFER lplpDirectSoundBuffer, IUnknown *pUnkOuter)
 {
-    NFS2_USE(app);
-    NFS2_USE(cpu);
-    NFS2_ASSERT(pUnkOuter == nullptr);
-    if (lpcDSBufferDesc->dwFlags & 1)
+    if (!lplpDirectSoundBuffer)
+        return DSERR_INVALIDPARAM;
+    if (pUnkOuter)
+        return DSERR_NOAGGREGATION;
+    AudioFormat format;
+    DWORD bufferBytes;
+    const HRESULT result = IDirectSoundBuffer::readDescription(app, lpcDSBufferDesc, &format, &bufferBytes);
+    if (result != DS_OK)
+    {
+        *lplpDirectSoundBuffer = Packed<IDirectSoundBuffer>();
+        return result;
+    }
+    if (lpcDSBufferDesc->dwFlags & DSBCAPS_PRIMARYBUFFER)
     {
         if (!s_primaryBuffer)
         {
             s_primaryBuffer = Packed<IDirectSoundBuffer>(com::ComAlloc(app));
             IDirectSoundBuffer* buffer = &app->getMemory<IDirectSoundBuffer>(s_primaryBuffer);
-            new (buffer) IDirectSoundBuffer(app, cpu, this, lpcDSBufferDesc);
+            new (buffer) IDirectSoundBuffer(app, sharedDevice(app), bufferBytes, format, true);
         }
         else
         {
@@ -86,9 +108,9 @@ HRESULT IDirectSound::CreateSoundBuffer(WinApplication* app, x86::CPU& cpu,
     {
         *lplpDirectSoundBuffer = Packed<IDirectSoundBuffer>(com::ComAlloc(app));
         IDirectSoundBuffer* buffer = &app->getMemory<IDirectSoundBuffer>(*lplpDirectSoundBuffer);
-        new (buffer) IDirectSoundBuffer(app, cpu, this, lpcDSBufferDesc);
+        new (buffer) IDirectSoundBuffer(app, sharedDevice(app), bufferBytes, format, false);
     }
-    return 0;
+    return DS_OK;
 }
 
 HRESULT IDirectSound::GetCaps(WinApplication* app, x86::CPU& cpu,
@@ -96,10 +118,13 @@ HRESULT IDirectSound::GetCaps(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_ASSERT(lpDSCaps->dwSize == sizeof(DSCAPS));
-    lpDSCaps->dwFlags = DSCAPS_PRIMARYSTEREO | DSCAPS_SECONDARYSTEREO | DSCAPS_PRIMARY16BIT | DSCAPS_SECONDARY16BIT | DSCAPS_CERTIFIED;
-    lpDSCaps->dwMinSecondarySampleRate = 22050;
-    lpDSCaps->dwMaxSecondarySampleRate = 44100;
+    if (!lpDSCaps || lpDSCaps->dwSize != sizeof(DSCAPS))
+        return DSERR_INVALIDPARAM;
+    lpDSCaps->dwFlags = DSCAPS_PRIMARYMONO | DSCAPS_PRIMARYSTEREO | DSCAPS_PRIMARY8BIT | DSCAPS_PRIMARY16BIT
+                      | DSCAPS_SECONDARYMONO | DSCAPS_SECONDARYSTEREO | DSCAPS_SECONDARY8BIT | DSCAPS_SECONDARY16BIT
+                      | DSCAPS_CONTINUOUSRATE | DSCAPS_CERTIFIED;
+    lpDSCaps->dwMinSecondarySampleRate = 100;
+    lpDSCaps->dwMaxSecondarySampleRate = 100000;
     lpDSCaps->dwPrimaryBuffers = 1;
     lpDSCaps->dwMaxHwMixingAllBuffers = 65535;
     lpDSCaps->dwMaxHwMixingStaticBuffers = 65535;
@@ -120,7 +145,7 @@ HRESULT IDirectSound::GetCaps(WinApplication* app, x86::CPU& cpu,
     lpDSCaps->dwPlayCpuOverheadSwBuffers = 0;
     lpDSCaps->dwReserved1 = 0;
     lpDSCaps->dwReserved2 = 0;
-    return 0;
+    return DS_OK;
 }
 
 HRESULT IDirectSound::DuplicateSoundBuffer(WinApplication* app, x86::CPU& cpu,
@@ -141,9 +166,8 @@ HRESULT IDirectSound::SetCooperativeLevel(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(cpu);
     NFS2_USE(hwnd);
     NFS2_USE(dwLevel);
-    m_resource = new AudioDevice();
-    app->allocateResource(m_resource);
-    return 0;
+    m_resource = sharedDevice(app);
+    return DS_OK;
 }
 
 HRESULT IDirectSound::Compact(WinApplication* app, x86::CPU& cpu)

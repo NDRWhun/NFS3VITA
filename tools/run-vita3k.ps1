@@ -32,10 +32,10 @@ function Focus-Window($handle) {
     return $false
 }
 
-# Captures the emulator window only while it shows the game (title starts with the app name).
+# Captures the emulator window; notes when its title does not name the game.
 function Save-GameWindow($process, $path) {
     $process.Refresh()
-    if ($process.MainWindowTitle -notlike 'NFS3VITA*') { Write-Host "no game window ($($process.MainWindowTitle))"; return }
+    if ($process.MainWindowTitle -notlike 'NFS3VITA*') { Write-Host "window title '$($process.MainWindowTitle)' at $path" }
     $handle = $process.MainWindowHandle
     if (-not (Focus-Window $handle)) { Write-Host 'emulator window not in front, skipping capture'; return }
     $rect = New-Object RECT
@@ -83,7 +83,11 @@ if ($Install) {
 }
 # GUI mode on purpose: Vita3K's console mode (-z) has no audio backend and crashes on sceAudioOut.
 $args = @('-l', '1', '-r', $titleId)
-$process = Start-Process -FilePath $vita3k -ArgumentList $args -WorkingDirectory (Split-Path $vita3k) -PassThru
+# Console output is written per line, so it survives a killed emulator (vita3k.log may not).
+$emuOut = Join-Path (Split-Path $vita3k) 'vita3k_stdout.txt'
+$emuErr = Join-Path (Split-Path $vita3k) 'vita3k_stderr.txt'
+$process = Start-Process -FilePath $vita3k -ArgumentList $args -WorkingDirectory (Split-Path $vita3k) -PassThru `
+    -RedirectStandardOutput $emuOut -RedirectStandardError $emuErr
 if ($ScreenshotAt.Count -gt 0) { New-Item -ItemType Directory -Force $ScreenshotDir | Out-Null }
 foreach ($second in ($ScreenshotAt | Sort-Object)) {
     $wait = $second - [int]((Get-Date) - $process.StartTime).TotalSeconds
@@ -95,7 +99,9 @@ if ($TimeoutSec -gt 0) {
     if ($remaining -lt 1) { $remaining = 1 }
     if (-not $process.WaitForExit($remaining * 1000)) {
         Write-Host "Timeout after $TimeoutSec s, stopping emulator"
-        $process.Kill()
+        # A normal close lets Vita3K flush its log; kill only if it does not exit.
+        $process.CloseMainWindow() | Out-Null
+        if (-not $process.WaitForExit(10000)) { $process.Kill() }
     }
 } else {
     $process.WaitForExit()
@@ -103,5 +109,7 @@ if ($TimeoutSec -gt 0) {
 
 Write-Host "=== $gameLog ==="
 if (Test-Path $gameLog) { Get-Content $gameLog -Tail 60 } else { Write-Host '(no game log written)' }
-Write-Host "=== $emuLog (errors) ==="
-if (Test-Path $emuLog) { Get-Content $emuLog | Select-String -Pattern 'error|Error|warn|crash|unimpl|nid' | Select-Object -Last 40 }
+foreach ($log in @($emuOut, $emuErr, $emuLog)) {
+    Write-Host "=== $log (errors) ==="
+    if (Test-Path $log) { Get-Content $log | Select-String -Pattern 'error|Error|warn|crash|unimpl|nid' | Select-Object -Last 40 }
+}

@@ -49,7 +49,8 @@ public:
     static x86::reg32 getCount();
 
     GamepadState getState() const;
-    // Turns pad changes into keyboard messages while the game is not polling DirectInput.
+    // Turns pad changes into keyboard messages while the game is not polling DirectInput; Triangle opens
+    // the system IME and types the confirmed text into the game. Any thread.
     static void updateKeys();
     // Posts a key by name (up down left right enter escape space); unknown names are ignored.
     static void pushNamedKey(const char* name, bool down);

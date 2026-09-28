@@ -6,6 +6,17 @@
 namespace win32 { namespace dsound
 {
 
+enum DirectSoundResult : HRESULT
+{
+    DS_OK                       = 0,
+    DSERR_ALREADYINITIALIZED    = 0x8878000F,
+    DSERR_CONTROLUNAVAIL        = 0x8878001E,
+    DSERR_INVALIDCALL           = 0x88780032,
+    DSERR_BADFORMAT             = 0x88780064,
+    DSERR_NOAGGREGATION         = 0x80040110,
+    DSERR_INVALIDPARAM          = 0x80070057
+};
+
 class IDirectSoundBuffer;
 struct WAVEFORMATEX;
 struct DSBUFFERDESC
@@ -26,7 +37,6 @@ typedef DSCAPS* LPDSCAPS;
 
 class IDirectSound : public com::IUnknown
 {
-    friend class IDirectSoundBuffer;
 public:
     IDirectSound();
 
