@@ -1179,10 +1179,10 @@ BOOL SetStdHandle(WinApplication* app, x86::CPU& cpu,
 BOOL SetThreadPriority(WinApplication* app, x86::CPU& cpu,
                        HANDLE hThread, int nPriority)
 {
-    NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(hThread);
-    NFS2_USE(nPriority);
+    win32::Thread* thread = dynamic_cast<win32::Thread*>(app->getResource(hThread));
+    if (thread)
+        thread->setPriority(nPriority);
     return 1;
 }
 

@@ -11,6 +11,7 @@
 #include <fpu.h>
 #include <mmx.h>
 #include <nfs3hp.h>
+#include "gamespeed.h"
 #include "widescreen.h"
 #include <psp2/ctrl.h>
 #include <psp2/power.h>
@@ -135,6 +136,8 @@ int main(int, char**)
             nfs3hp::widescreen::install(app);
         else
             pf::logInfo("widescreen: off");
+        if (pf::perf::enabled())
+            nfs3hp::gamespeed::install(app);
 #ifdef NFS3_PROFILE
         pf::prof::start(app);
 #endif

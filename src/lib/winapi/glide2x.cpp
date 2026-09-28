@@ -4,8 +4,10 @@
 #include <lib/renderer.h>
 #include <lib/gliderenderer.h>
 #include <lib/window.h>
+#include <platform/config.h>
 #include <platform/log.h>
 #include <platform/perf.h>
+#include <platform/time.h>
 #include <cmath>
 
 
@@ -14,6 +16,8 @@ namespace win32 { namespace glide2x
 
 static Renderer* s_renderer;
 static GlideRenderer* s_glideRenderer;
+// debug_frame_delay_ms: busy time added to every grBufferSwap with the execution lock held (emulates a slower CPU).
+static uint32_t s_frameDelayUs;
 
 static const x86::reg32 GR_FOG_TABLE_SIZE   = 64;
 static const x86::reg32 MAX_NUM_SST         = 4;
@@ -356,6 +360,10 @@ static void grGlideInit(WinApplication* app, x86::CPU& cpu)
     NFS2_USE(cpu);
     s_renderer = nullptr;
     s_glideRenderer = nullptr;
+    const int frameDelayMs = pf::Config::getInt("debug_frame_delay_ms", 0);
+    s_frameDelayUs = frameDelayMs > 0 ? uint32_t(frameDelayMs) * 1000 : 0;
+    if (s_frameDelayUs)
+        pf::logInfo("glide: debug_frame_delay_ms=%d busy per swap", frameDelayMs);
 }
 
 static void grGlideShutdown(WinApplication* app, x86::CPU& cpu)
@@ -576,6 +584,13 @@ static void grBufferClear(WinApplication* app, x86::CPU& cpu, GrColor_t color, G
 static void grBufferSwap(WinApplication* app, x86::CPU& cpu, x86::reg32 swapInterval)
 {
     NFS2_ASSERT(swapInterval == 1);
+    if (s_frameDelayUs)
+    {
+        // Like guest code, the busy loop is a sequence of preemption points.
+        const uint64_t end = pf::ticksUs() + s_frameDelayUs;
+        while (pf::ticksUs() < end)
+            app->allowPreemption(cpu);
+    }
     app->unlockContext(cpu);
     s_glideRenderer->swap();
     const bool timed = pf::perf::enabled();

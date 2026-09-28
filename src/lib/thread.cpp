@@ -59,6 +59,7 @@ Thread::Shared::Shared(WinApplication* app, x86::reg32 entryPoint, x86::reg32 pa
     ,   m_parameter(parameter)
     ,   m_flags(flags)
     ,   m_threadId(1 + s_threadCount.fetch_add(1))
+    ,   m_priority(0)
     ,   m_semaphore(nullptr)
     ,   m_thread(nullptr)
     ,   m_cpu{}
@@ -105,6 +106,11 @@ void Thread::resume()
     m_shared->m_semaphore->post();
 }
 
+void Thread::setPriority(int priority)
+{
+    m_shared->m_priority.store(priority, std::memory_order_relaxed);
+}
+
 x86::reg32 Thread::currentThreadId()
 {
     pf::LockGuard guard(s_threadIdMutex);
@@ -148,7 +154,8 @@ int Thread::run(void* data)
     Shared* shared = static_cast<Shared*>(data);
     registerCurrentThread(shared->m_threadId);
     shared->m_semaphore->wait();
-    int result = shared->m_app->runThread(shared->m_cpu, shared->m_entryPoint, shared->m_parameter);
+    const bool preempts = shared->m_priority.load(std::memory_order_relaxed) > 0;
+    int result = shared->m_app->runThread(shared->m_cpu, shared->m_entryPoint, shared->m_parameter, true, preempts);
     unregisterCurrentThread();
     return result;
 }

@@ -15,6 +15,10 @@ namespace
 const uint32_t LogIntervalUs = 5000000;
 
 std::atomic<uint32_t> s_counters[CounterCount];
+std::atomic<Reporter> s_reporter{nullptr};
+std::atomic<uint32_t> s_preemptCount{0};
+std::atomic<uint32_t> s_preemptSum{0};
+std::atomic<uint32_t> s_preemptMax{0};
 
 // Render thread only (set by init() before that thread starts).
 uint32_t s_intervalStart = 0;
@@ -51,6 +55,16 @@ void add(Counter counter, uint32_t microseconds)
     s_counters[counter].fetch_add(microseconds, std::memory_order_relaxed);
 }
 
+void preemptWait(uint32_t microseconds)
+{
+    s_preemptCount.fetch_add(1, std::memory_order_relaxed);
+    s_preemptSum.fetch_add(microseconds, std::memory_order_relaxed);
+    uint32_t max = s_preemptMax.load(std::memory_order_relaxed);
+    while (microseconds > max && !s_preemptMax.compare_exchange_weak(max, microseconds, std::memory_order_relaxed))
+    {
+    }
+}
+
 void framePresented(uint32_t drawCalls, uint32_t triangles)
 {
     ++s_frames;
@@ -71,17 +85,31 @@ void framePresented(uint32_t drawCalls, uint32_t triangles)
     const double wait = msPerFrame(sums[SlotWait], frames);
     const double gil = msPerFrame(sums[GilWait], frames);
     const double game = frame > wait + gil ? frame - wait - gil : 0.0;
-    logInfo("perf: %.1f fps | frame %.1f ms = game %.1f + wait %.1f (fence %.1f) + gil %.1f | render %.1f (queue %.1f)"
-            " | gpu %.1f flip %.1f | %u calls %u tris (peak %u)",
-            double(frames) * 1000000.0 / double(elapsed), frame, game, wait, msPerFrame(sums[FenceWait], frames), gil,
+    const uint32_t preempts = s_preemptCount.exchange(0, std::memory_order_relaxed);
+    const uint32_t preemptSum = s_preemptSum.exchange(0, std::memory_order_relaxed);
+    const uint32_t preemptMax = s_preemptMax.exchange(0, std::memory_order_relaxed);
+    logInfo("perf: %.1f fps | frame %.1f ms = game %.1f (preempted %.1f) + wait %.1f (fence %.1f) + gil %.1f"
+            " | render %.1f (queue %.1f) | gpu %.1f flip %.1f | %u calls %u tris (peak %u)"
+            " | preempt %.0f/s wait %.2f max %.1f ms",
+            double(frames) * 1000000.0 / double(elapsed), frame, game, msPerFrame(sums[Preempted], frames), wait,
+            msPerFrame(sums[FenceWait], frames), gil,
             msPerFrame(sums[Render], frames), msPerFrame(sums[QueueWait], frames),
             msPerFrame(sums[GpuLatency], frames), msPerFrame(sums[FlipWait], frames),
-            s_drawCalls / frames, s_triangles / frames, s_peakTriangles);
+            s_drawCalls / frames, s_triangles / frames, s_peakTriangles,
+            double(preempts) * 1000000.0 / double(elapsed), preempts ? msPerFrame(preemptSum, preempts) : 0.0,
+            double(preemptMax) / 1000.0);
+    if (Reporter reporter = s_reporter.load(std::memory_order_acquire))
+        reporter(elapsed);
     s_intervalStart = time;
     s_frames = 0;
     s_drawCalls = 0;
     s_triangles = 0;
     s_peakTriangles = 0;
+}
+
+void setReporter(Reporter reporter)
+{
+    s_reporter.store(reporter, std::memory_order_release);
 }
 
 }}

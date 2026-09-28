@@ -5,6 +5,7 @@
 #include    <cpu.h>
 #include    <fpu.h>
 #include    <lib/memmap.h>
+#include    <atomic>
 #include    <cstring>
 #include    <map>
 #include    <string>
@@ -163,17 +164,29 @@ public:
     // Registered name of the method at a guest address, or nullptr.
     const char* getMethodName(x86::reg32 address) const;
 
-    int runThread(x86::CPU& cpu, x86::reg32 entryPoint, x86::reg32 parameter = 0, bool threadLock = true);
+    // A preempting thread (a timer callback, or a guest thread with a priority above normal, as Windows schedules
+    // them) gets the execution lock at the next preemption point of the thread holding it.
+    int runThread(x86::CPU& cpu, x86::reg32 entryPoint, x86::reg32 parameter = 0, bool threadLock = true,
+                  bool preempts = false);
 
     void lockContext(const x86::CPU& cpu);
     void unlockContext(const x86::CPU& cpu);
     void unmarkContext(const x86::CPU& cpu);
+
+    // Preemption point for the thread holding the execution lock: if a preempting thread waits for the lock, a
+    // thread that does not preempt releases it and queues again. Every dynamic_call is one.
+    inline void allowPreemption(const x86::CPU& cpu)
+    {
+        if (__builtin_expect(m_preemptWaiters.load(std::memory_order_relaxed) != 0, 0))
+            yieldContext(cpu);
+    }
 
     void terminate();
 
 public:
     inline void dynamic_call(uint32_t address, x86::CPU& cpu)
     {
+        allowPreemption(cpu);
         const MethodSlot& slot = m_methodSlots[methodSlot(address)];
         const MethodPtr method = slot.address == address ? slot.method : findMethod(address);
         method(this, cpu);
@@ -194,6 +207,7 @@ private:
     MethodPtr findMethod(x86::reg32 address) const __attribute__((cold));
     void insertMethod(x86::reg32 address, MethodPtr method);
     void growMethodTable();
+    void yieldContext(const x86::CPU& cpu) __attribute__((cold));
 
 private:
     MemMap*                                 m_appName;
@@ -201,6 +215,8 @@ private:
     MemMap*                                 m_env;
     std::map<x86::reg32, GenericResource*>  m_resources;
     Mutex*                                  m_executionContext;
+    std::atomic<int>                        m_preemptWaiters;   // preempting threads waiting for the lock
+    int                                     m_contextDepth;     // lock count of the execution context owner
     Mutex*                                  m_resourceContext;
     // Open addressing with linear probing; power-of-two size, at most half full.
     std::vector<MethodSlot>                 m_methodSlots;

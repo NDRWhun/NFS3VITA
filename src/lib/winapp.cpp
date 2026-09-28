@@ -12,6 +12,7 @@
 #include <winapi/ddraw.h>
 #include <winapi/glide2x.h>
 #include <platform/log.h>
+#include <platform/perf.h>
 #include <algorithm>
 #include <atomic>
 #include <vector>
@@ -21,6 +22,10 @@ namespace win32
 
 static x86::reg32 s_resourceIndex;
 static std::atomic<int> s_resourceCount{0};
+
+// Words of the guest thread block (fs) used by the host; guest code only uses fs:[0].
+static const x86::reg32 ThreadLockOffset     = 0x8;    // Mutex* of the execution context, or null
+static const x86::reg32 ThreadPreemptsOffset = 0xc;    // non-zero for a preempting thread (runThread)
 
 // The method table doubles while methods register; about 7,800 methods end in 16,384 slots.
 static const x86::reg32 s_initialMethodSlotBits = 10;
@@ -68,6 +73,8 @@ WinApplication::WinApplication(const char* appName, x86::reg32 baseAddress, cons
     ,   m_appNameW(nullptr)
     ,   m_env(nullptr)
     ,   m_executionContext(new Mutex("ExecutionContext"))
+    ,   m_preemptWaiters(0)
+    ,   m_contextDepth(0)
     ,   m_resourceContext(new Mutex("Resource"))
     ,   m_methodSlots(x86::reg32(1) << s_initialMethodSlotBits, MethodSlot{0, &callAddressZero})
     ,   m_methodShift(32 - s_initialMethodSlotBits)
@@ -273,14 +280,16 @@ void WinApplication::growMethodTable()
     }
 }
 
-int WinApplication::runThread(x86::CPU& cpu, x86::reg32 entryPoint, x86::reg32 parameter, bool threadLock)
+int WinApplication::runThread(x86::CPU& cpu, x86::reg32 entryPoint, x86::reg32 parameter, bool threadLock,
+                              bool preempts)
 {
     if (!m_cpu.terminate)
     {
         win32::MemMap threadStorage(4096);
         win32::MemMap threadStack(1024 * 1024);
         cpu.init(threadStorage.getBlockStart(), entryPoint);
-        getMemory<Mutex*>(cpu.efs + 8) = threadLock ? m_executionContext : nullptr;
+        getMemory<Mutex*>(cpu.efs + ThreadLockOffset) = threadLock ? m_executionContext : nullptr;
+        getMemory<x86::reg32>(cpu.efs + ThreadPreemptsOffset) = preempts ? 1 : 0;
         LockContext ctx(*this, cpu);
         cpu.esp = threadStack.getBlockStart() + threadStack.getBlockSize() - 8;
         getMemory<x86::reg32>(cpu.esp + 4) = parameter;
@@ -296,36 +305,68 @@ int WinApplication::runThread(x86::CPU& cpu, x86::reg32 entryPoint, x86::reg32 p
 
 void WinApplication::lockContext(const x86::CPU& cpu)
 {
-    Mutex* executionContext = getMemory<Mutex*>(cpu.efs + 8);
+    Mutex* executionContext = getMemory<Mutex*>(cpu.efs + ThreadLockOffset);
     NFS2_ASSERT(executionContext);
     if (executionContext)
     {
-        executionContext->lock();
+        if (getMemory<x86::reg32>(cpu.efs + ThreadPreemptsOffset))
+        {
+            const bool timed = pf::perf::enabled();
+            const uint32_t start = timed ? pf::perf::now() : 0;
+            m_preemptWaiters.fetch_add(1, std::memory_order_relaxed);
+            executionContext->lock();
+            m_preemptWaiters.fetch_sub(1, std::memory_order_relaxed);
+            if (timed)
+                pf::perf::preemptWait(pf::perf::now() - start);
+        }
+        else
+        {
+            executionContext->lock();
+        }
+        ++m_contextDepth;
     }
 }
 
 void WinApplication::unlockContext(const x86::CPU& cpu)
 {
-    Mutex* executionContext = getMemory<Mutex*>(cpu.efs + 8);
+    Mutex* executionContext = getMemory<Mutex*>(cpu.efs + ThreadLockOffset);
     NFS2_ASSERT(executionContext);
     if (executionContext)
     {
+        --m_contextDepth;
         executionContext->unlock();
     }
 }
 
 void WinApplication::unmarkContext(const x86::CPU& cpu)
 {
-    Mutex* executionContext = getMemory<Mutex*>(cpu.efs + 8);
+    Mutex* executionContext = getMemory<Mutex*>(cpu.efs + ThreadLockOffset);
     if (executionContext)
     {
+        --m_contextDepth;
         executionContext->unlock();
-        getMemory<Mutex*>(cpu.efs + 8) = nullptr;
+        getMemory<Mutex*>(cpu.efs + ThreadLockOffset) = nullptr;
     }
     else
     {
         NFS2_ASSERT(false);
     }
+}
+
+// Releases the execution lock and queues for it again. A released kernel mutex passes to the thread at the head of
+// its wait queue (FIFO), so the preempting threads already waiting run first, each until it blocks. Preempting
+// threads, threads without the lock and a lock held more than once do not yield.
+void WinApplication::yieldContext(const x86::CPU& cpu)
+{
+    if (getMemory<Mutex*>(cpu.efs + ThreadLockOffset) != m_executionContext
+        || getMemory<x86::reg32>(cpu.efs + ThreadPreemptsOffset) != 0 || m_contextDepth != 1)
+        return;
+    const bool timed = pf::perf::enabled();
+    const uint32_t start = timed ? pf::perf::now() : 0;
+    unlockContext(cpu);
+    lockContext(cpu);
+    if (timed)
+        pf::perf::add(pf::perf::Preempted, pf::perf::now() - start);
 }
 
 void WinApplication::terminate()

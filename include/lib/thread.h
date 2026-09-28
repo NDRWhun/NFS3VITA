@@ -28,6 +28,9 @@ public:
     }
 
     void resume();
+    // Guest priority (THREAD_PRIORITY_*), read when the thread starts: above normal makes it preempt normal threads
+    // (WinApplication::runThread). nfs3.exe sets it on suspended threads only (sub_4df7a0).
+    void setPriority(int priority);
     void terminate();
     x86::reg32 threadId() const;
     static void sleep(x86::reg32 milliseconds);
@@ -49,6 +52,7 @@ private:
         x86::reg32       m_parameter;
         x86::reg32       m_flags;
         x86::reg32       m_threadId;
+        std::atomic<int> m_priority;
         pf::Semaphore*   m_semaphore;
         pf::Thread*      m_thread;
         x86::CPU         m_cpu;

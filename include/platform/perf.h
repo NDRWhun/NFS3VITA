@@ -15,6 +15,7 @@ enum Counter
     QueueWait,      // render thread blocked in sceGxmDisplayQueueAddEntry
     GpuLatency,     // sceGxmEndScene until the display callback runs
     FlipWait,       // display callback setting the frame buffer and waiting for vblank
+    Preempted,      // normal-priority threads (the game thread) giving the execution lock to preempting threads
     CounterCount
 };
 
@@ -27,8 +28,13 @@ inline bool enabled() { return g_enabled; }
 uint32_t now();
 // Any thread.
 void add(Counter counter, uint32_t microseconds);
+// Any thread: time a preempting thread (timer callback, raised guest priority) waited for the execution lock.
+void preemptWait(uint32_t microseconds);
 // Render thread, after each game frame it queued; logs one line about every 5 s.
 void framePresented(uint32_t drawCalls, uint32_t triangles);
+// Called on the render thread after each log line with the interval length in microseconds.
+typedef void (*Reporter)(uint32_t intervalUs);
+void setReporter(Reporter reporter);
 
 }}
 

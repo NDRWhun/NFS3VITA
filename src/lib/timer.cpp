@@ -89,8 +89,9 @@ private:
 
     static void fire(WinApplication* app, x86::reg32 callback, x86::reg32 parameter)
     {
+        // winmm runs timer callbacks on a time-critical thread: they preempt the game thread.
         alignas(16) x86::CPU cpu{};
-        app->runThread(cpu, callback, parameter);
+        app->runThread(cpu, callback, parameter, true, true);
     }
 
 private:
