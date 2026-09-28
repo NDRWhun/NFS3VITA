@@ -17,14 +17,14 @@ enum
     FrameSlots      = 3
 };
 
-// Glide triangle vertex as consumed by glide_v.cg (56 bytes).
+// Glide triangle vertex as consumed by glide_v.cg (56 bytes); glide_v does not read the reserved words.
 struct Vertex
 {
     float       x, y, z;
     uint32_t    color;
     float       u, v;
-    float       colorCombine, alphaCombine, texWrap, oow;
-    float       atlasSize, width, offX, offY;
+    float       colorCombine, alphaCombine, reserved0, oow;
+    float       reserved1, width, offX, offY;
 };
 
 // Display area that Glide screen coordinates (0..sourceWidth, 0..sourceHeight) are mapped to.
@@ -41,6 +41,8 @@ struct DrawCall
     bool        zWrite;
     bool        alphaBlend;
     Mapping     mapping;
+    bool        texClamp;       // texture coordinates clamp to the edge texels (else they wrap)
+    bool        texPoint;       // clamped textures use the nearest texel (else bilinear filtering)
 };
 
 enum FrameKind

@@ -4,20 +4,21 @@
 void main(
     float3 aPosition,
     float4 aColor,
-    float2 aTexCoord,
-    float4 aCombine,
-    float4 aAtlasInfo,
-    uniform float4 uViewport,          // x,y: NDC scale; z,w: NDC offset
+    float2 aTexCoord,                       // sow, tow (0..256 over the texture)
+    float4 aCombine,                        // x: colour factor, y: alpha factor, w: oow
+    float4 aAtlasInfo,                      // y: texture size N, z,w: atlas offset in texels
+    uniform float4 uViewport,               // x,y: NDC scale; z,w: NDC offset
     float4 out vPosition : POSITION,
-    float3 out vTexCoord : TEXCOORD0,
-    float4 out vColor    : COLOR0,
-    float4 out vCombine  : TEXCOORD1,
-    float4 out vAtlasInfo: TEXCOORD2)
+    float3 out vTexCoord : TEXCOORD2,       // texel position times oow, and oow
+    half4  out vColor    : COLOR0,
+    half4  out vFactor   : TEXCOORD1,       // combine factors (colour, colour, colour, alpha)
+    float4 out vAtlasInfo: TEXCOORD0)       // N, 1/N, atlas offset
 {
-    vTexCoord = float3(aTexCoord, aCombine.w);
-    vCombine = aCombine;
+    float N = aAtlasInfo.y;
+    vTexCoord = float3(aTexCoord * (N * (1.0 / 256.0)), aCombine.w);
     vColor = aColor;
-    vAtlasInfo = aAtlasInfo;
+    vFactor = aCombine.xxxy;
+    vAtlasInfo = float4(N, 1.0 / N, aAtlasInfo.zw);
     vPosition = float4(aPosition.x * uViewport.x + uViewport.z,
                        aPosition.y * uViewport.y + uViewport.w,
                        aPosition.z * (1.0 / 65536.0),

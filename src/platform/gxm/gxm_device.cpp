@@ -13,7 +13,8 @@
 // Embedded shader binaries (generated from shaders/*.cg).
 extern "C" {
 extern const unsigned char nfs3_shader_glide_v[];
-extern const unsigned char nfs3_shader_glide_f[];
+extern const unsigned char nfs3_shader_glide_clamp_f[];
+extern const unsigned char nfs3_shader_glide_wrap_f[];
 extern const unsigned char nfs3_shader_blit_v[];
 extern const unsigned char nfs3_shader_blit_f[];
 extern const unsigned char nfs3_shader_clear_v[];
@@ -147,6 +148,15 @@ void displayCallback(const void* data)
         s_completedFrameIndex.store(display->frameIndex);
 }
 
+void initAtlasTexture(SceGxmTexture* texture, void* atlas, SceGxmTextureFilter filter)
+{
+    sceGxmTextureInitLinear(texture, atlas, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR, AtlasSize, AtlasSize, 1);
+    sceGxmTextureSetMinFilter(texture, filter);
+    sceGxmTextureSetMagFilter(texture, filter);
+    sceGxmTextureSetUAddrMode(texture, SCE_GXM_TEXTURE_ADDR_CLAMP);
+    sceGxmTextureSetVAddrMode(texture, SCE_GXM_TEXTURE_ADDR_CLAMP);
+}
+
 unsigned int resourceIndex(const SceGxmProgram* program, const char* name)
 {
     const SceGxmProgramParameter* parameter = sceGxmProgramFindParameterByName(program, name);
@@ -189,12 +199,11 @@ struct Device::Impl
     SceUID                  patcherBufferUid = InvalidUid;
     SceUID                  patcherVertexUsseUid = InvalidUid;
     SceUID                  patcherFragmentUsseUid = InvalidUid;
-    SceGxmShaderPatcherId   glideVId = nullptr, glideFId = nullptr;
+    SceGxmShaderPatcherId   glideVId = nullptr, glideWrapFId = nullptr, glideClampFId = nullptr;
     SceGxmShaderPatcherId   blitVId = nullptr, blitFId = nullptr;
     SceGxmShaderPatcherId   clearVId = nullptr, clearFId = nullptr;
     SceGxmVertexProgram*    glideV = nullptr;
-    SceGxmFragmentProgram*  glideFBlend = nullptr;
-    SceGxmFragmentProgram*  glideFAdd = nullptr;
+    SceGxmFragmentProgram*  glideF[2][2] = {};  // [DrawCall::texClamp][DrawCall::alphaBlend]
     SceGxmVertexProgram*    blitV = nullptr;
     SceGxmFragmentProgram*  blitF = nullptr;
     SceGxmVertexProgram*    clearV = nullptr;
@@ -213,9 +222,10 @@ struct Device::Impl
     uint16_t*               triangleIndices = nullptr;
     SceUID                  triangleIndicesUid = InvalidUid;
 
-    // Atlas
+    // Atlas, as two descriptors of the same memory
     SceUID                  atlasUid = InvalidUid;
-    SceGxmTexture           atlasTexture;
+    SceGxmTexture           atlasPoint;             // nearest texel: wrapped and point-sampled draws
+    SceGxmTexture           atlasLinear;            // bilinear: clamped draws
 
     // Frame slots. A slot is handed back by the render thread once its scene is queued; the game thread then
     // waits for gpuPending before it writes the slot's buffers again.
@@ -407,7 +417,9 @@ bool Device::Impl::initPrograms()
 
     struct ProgramEntry { const unsigned char* data; SceGxmShaderPatcherId* id; const char* name; };
     ProgramEntry entries[] = {
-        { nfs3_shader_glide_v, &glideVId, "glide_v" }, { nfs3_shader_glide_f, &glideFId, "glide_f" },
+        { nfs3_shader_glide_v, &glideVId, "glide_v" },
+        { nfs3_shader_glide_wrap_f, &glideWrapFId, "glide_wrap_f" },
+        { nfs3_shader_glide_clamp_f, &glideClampFId, "glide_clamp_f" },
         { nfs3_shader_blit_v,  &blitVId,  "blit_v" },  { nfs3_shader_blit_f,  &blitFId,  "blit_f" },
         { nfs3_shader_clear_v, &clearVId, "clear_v" }, { nfs3_shader_clear_f, &clearFId, "clear_f" },
     };
@@ -429,7 +441,8 @@ bool Device::Impl::initPrograms()
     }
 
     const SceGxmProgram* glideVProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_glide_v);
-    const SceGxmProgram* glideFProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_glide_f);
+    const SceGxmProgram* glideWrapFProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_glide_wrap_f);
+    const SceGxmProgram* glideClampFProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_glide_clamp_f);
     const SceGxmProgram* blitVProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_blit_v);
     const SceGxmProgram* blitFProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_blit_f);
     const SceGxmProgram* clearVProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_clear_v);
@@ -459,23 +472,29 @@ bool Device::Impl::initPrograms()
     blend.colorDst = SCE_GXM_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     blend.alphaSrc = SCE_GXM_BLEND_FACTOR_ONE;
     blend.alphaDst = SCE_GXM_BLEND_FACTOR_ZERO;
-    result = sceGxmShaderPatcherCreateFragmentProgram(patcher, glideFId, SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4,
-                                                      SCE_GXM_MULTISAMPLE_NONE, &blend, glideVProgram, &glideFBlend);
-    if (result < 0)
+    const SceGxmShaderPatcherId glideFIds[2] = { glideWrapFId, glideClampFId };
+    for (int clamp = 0; clamp < 2; ++clamp)
     {
-        logError("glide blend fragment program creation failed: 0x%08x", result);
-        return false;
-    }
-    blend.colorDst = SCE_GXM_BLEND_FACTOR_ONE;
-    result = sceGxmShaderPatcherCreateFragmentProgram(patcher, glideFId, SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4,
-                                                      SCE_GXM_MULTISAMPLE_NONE, &blend, glideVProgram, &glideFAdd);
-    if (result < 0)
-    {
-        logError("glide additive fragment program creation failed: 0x%08x", result);
-        return false;
+        for (int alphaBlend = 0; alphaBlend < 2; ++alphaBlend)
+        {
+            blend.colorDst = alphaBlend ? SCE_GXM_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : SCE_GXM_BLEND_FACTOR_ONE;
+            result = sceGxmShaderPatcherCreateFragmentProgram(patcher, glideFIds[clamp], SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4,
+                                                              SCE_GXM_MULTISAMPLE_NONE, &blend, glideVProgram,
+                                                              &glideF[clamp][alphaBlend]);
+            if (result < 0)
+            {
+                logError("glide fragment program creation failed (clamp %d, blend %d): 0x%08x", clamp, alphaBlend, result);
+                return false;
+            }
+        }
     }
     glideViewportParam = sceGxmProgramFindParameterByName(glideVProgram, "uViewport");
-    glideTextureUnit = resourceIndex(glideFProgram, "uTexture");
+    glideTextureUnit = resourceIndex(glideWrapFProgram, "uTexture");
+    if (resourceIndex(glideClampFProgram, "uTexture") != glideTextureUnit)
+    {
+        logError("glide fragment programs use different texture units");
+        return false;
+    }
 
     SceGxmVertexAttribute quadAttributes[2];
     quadAttributes[0] = { 0, 0, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, uint16_t(resourceIndex(blitVProgram, "aPosition")) };
@@ -741,10 +760,10 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
             const Rect full = { 0, 0, DisplayWidth, DisplayHeight };
 
             sceGxmSetVertexProgram(context, glideV);
-            sceGxmSetFragmentTexture(context, glideTextureUnit, &atlasTexture);
             sceGxmSetVertexStream(context, 0, frame.vertices);
             Mapping mapping = frame.drawCalls.empty() ? MapBox : frame.drawCalls.front().mapping;
             setGlideMapping(mapping == MapFull ? full : viewport, sw, sh);
+            const SceGxmTexture* atlas = nullptr;
 
             uint32_t first = 0;
             for (const DrawCall& call : frame.drawCalls)
@@ -757,9 +776,16 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
                         mapping = call.mapping;
                         setGlideMapping(mapping == MapFull ? full : viewport, sw, sh);
                     }
+                    // glide_clamp_f filters through the descriptor; glide_wrap_f filters itself from nearest texels.
+                    const SceGxmTexture* callAtlas = call.texClamp && !call.texPoint ? &atlasLinear : &atlasPoint;
+                    if (callAtlas != atlas)
+                    {
+                        atlas = callAtlas;
+                        sceGxmSetFragmentTexture(context, glideTextureUnit, atlas);
+                    }
                     sceGxmSetFrontDepthFunc(context, call.zTest ? SCE_GXM_DEPTH_FUNC_LESS_EQUAL : SCE_GXM_DEPTH_FUNC_ALWAYS);
                     sceGxmSetFrontDepthWriteEnable(context, call.zWrite ? SCE_GXM_DEPTH_WRITE_ENABLED : SCE_GXM_DEPTH_WRITE_DISABLED);
-                    sceGxmSetFragmentProgram(context, call.alphaBlend ? glideFBlend : glideFAdd);
+                    sceGxmSetFragmentProgram(context, glideF[call.texClamp][call.alphaBlend]);
                     sceGxmDraw(context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, triangleIndices + first, count);
                 }
                 first = call.lastVertex;
@@ -863,11 +889,8 @@ bool Device::init()
 
     m_atlas = static_cast<uint32_t*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, AtlasSize * AtlasSize * 4,
                                               SCE_GXM_TEXTURE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_READ, &m_impl->atlasUid));
-    sceGxmTextureInitLinear(&m_impl->atlasTexture, m_atlas, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR, AtlasSize, AtlasSize, 1);
-    sceGxmTextureSetMinFilter(&m_impl->atlasTexture, SCE_GXM_TEXTURE_FILTER_POINT);
-    sceGxmTextureSetMagFilter(&m_impl->atlasTexture, SCE_GXM_TEXTURE_FILTER_POINT);
-    sceGxmTextureSetUAddrMode(&m_impl->atlasTexture, SCE_GXM_TEXTURE_ADDR_CLAMP);
-    sceGxmTextureSetVAddrMode(&m_impl->atlasTexture, SCE_GXM_TEXTURE_ADDR_CLAMP);
+    initAtlasTexture(&m_impl->atlasPoint, m_atlas, SCE_GXM_TEXTURE_FILTER_POINT);
+    initAtlasTexture(&m_impl->atlasLinear, m_atlas, SCE_GXM_TEXTURE_FILTER_LINEAR);
 
     m_impl->running = true;
     m_impl->thread = new Thread("nfs3_render", &Impl::threadEntry, m_impl, Thread::PriorityHigh, 256 * 1024, Thread::CpuAll);
@@ -899,13 +922,15 @@ void Device::shutdown()
     if (impl.patcher)
     {
         if (impl.glideV) sceGxmShaderPatcherReleaseVertexProgram(impl.patcher, impl.glideV);
-        if (impl.glideFBlend) sceGxmShaderPatcherReleaseFragmentProgram(impl.patcher, impl.glideFBlend);
-        if (impl.glideFAdd) sceGxmShaderPatcherReleaseFragmentProgram(impl.patcher, impl.glideFAdd);
+        for (auto& programs : impl.glideF)
+            for (SceGxmFragmentProgram* program : programs)
+                if (program) sceGxmShaderPatcherReleaseFragmentProgram(impl.patcher, program);
         if (impl.blitV) sceGxmShaderPatcherReleaseVertexProgram(impl.patcher, impl.blitV);
         if (impl.blitF) sceGxmShaderPatcherReleaseFragmentProgram(impl.patcher, impl.blitF);
         if (impl.clearV) sceGxmShaderPatcherReleaseVertexProgram(impl.patcher, impl.clearV);
         if (impl.clearF) sceGxmShaderPatcherReleaseFragmentProgram(impl.patcher, impl.clearF);
-        SceGxmShaderPatcherId ids[] = { impl.glideVId, impl.glideFId, impl.blitVId, impl.blitFId, impl.clearVId, impl.clearFId };
+        SceGxmShaderPatcherId ids[] = { impl.glideVId, impl.glideWrapFId, impl.glideClampFId, impl.blitVId, impl.blitFId,
+                                        impl.clearVId, impl.clearFId };
         for (SceGxmShaderPatcherId id : ids)
             if (id) sceGxmShaderPatcherUnregisterProgram(impl.patcher, id);
         sceGxmShaderPatcherDestroy(impl.patcher);

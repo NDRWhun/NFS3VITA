@@ -1,0 +1,17 @@
+// Glide triangle fragment program, clamped texture coordinates: one atlas read through the bound filter.
+// Clamping the texel position to [0.5, N - 0.5] gives CLAMP_TO_EDGE and never reads outside the texture's slot.
+
+float4 main(
+    float3 vTexCoord : TEXCOORD2,
+    half4  vColor    : COLOR0,
+    half4  vFactor   : TEXCOORD1,
+    float4 vAtlasInfo: TEXCOORD0,
+    uniform sampler2D uTexture) : COLOR
+{
+    float N = vAtlasInfo.x;
+    float2 q = clamp(vTexCoord.xy / vTexCoord.z, 0.5, N - 0.5);
+    half4 t = tex2D<half4>(uTexture, (vAtlasInfo.zw + q) * (1.0 / 2048.0));
+    half4 color = vColor * (1.0h + vFactor * (t - 1.0h));      // lerp(colour, colour * texture, factor)
+    clip(color.a - 0.0625h);
+    return color;
+}

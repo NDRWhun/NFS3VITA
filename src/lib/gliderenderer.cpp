@@ -32,11 +32,14 @@ GlideRenderer::GlideRenderer(Renderer* renderer)
     :   m_renderer(renderer)
     ,   m_frame(nullptr)
     ,   m_flushedVertices(0)
-    ,   m_vertexState{ 1.f, 1.f, 1.f, float(s_atlasSize), 256.f, 0.f, 0.f }
+    ,   m_vertexState{ 1.f, 1.f, 256.f, 0.f, 0.f }
     ,   m_zBuffer(true)
     ,   m_zTest(true)
     ,   m_alphaBlend(true)
     ,   m_mapping(pf::gxm::MapBox)
+    ,   m_texClamp(false)
+    ,   m_texPoint(false)
+    ,   m_textureAddress(0)
 {
     m_tmus[0] = new GlideTMU(s_atlasSize);
     m_tmus[1] = nullptr;
@@ -103,6 +106,8 @@ void GlideRenderer::flush()
     call.zWrite = m_zBuffer;
     call.alphaBlend = m_alphaBlend;
     call.mapping = m_mapping;
+    call.texClamp = m_texClamp;
+    call.texPoint = m_texPoint;
     f->drawCalls.push_back(call);
     if (m_mapping == pf::gxm::MapFull)
         f->wide = true;
@@ -160,6 +165,24 @@ void GlideRenderer::setMapping(pf::gxm::Mapping mapping)
     }
 }
 
+void GlideRenderer::setTexClamp(bool clamp)
+{
+    if (clamp != m_texClamp)
+    {
+        flush();
+        m_texClamp = clamp;
+    }
+}
+
+void GlideRenderer::setTexPoint(bool point)
+{
+    if (point != m_texPoint)
+    {
+        flush();
+        m_texPoint = point;
+    }
+}
+
 void GlideRenderer::setAlphaBlendDst(AlphaBlend method)
 {
     if (m_alphaBlend != (method == AB_1mSrcAlpha))
@@ -182,15 +205,22 @@ void GlideRenderer::setAlphaFactor(float alphaFactor)
 void GlideRenderer::setTexture(x86::reg32 tmu, x86::reg32 address)
 {
     NFS2_ASSERT(tmu == 0);
+    m_textureAddress = address;
     GlTextureSlot** info = m_tmus[tmu]->getTextureInfo(address);
     if (!*info)
     {
         pf::logError("texture at 0x%x used before download", address);
         return;
     }
-    m_vertexState.width = float(x86::reg32(256) >> (*info)->lod);
-    m_vertexState.offX = float((*info)->x);
-    m_vertexState.offY = float((*info)->y);
+    useTextureSlot(*info);
+}
+
+// Samples the following triangles from the slot.
+void GlideRenderer::useTextureSlot(const GlTextureSlot* slot)
+{
+    m_vertexState.width = float(x86::reg32(256) >> slot->lod);
+    m_vertexState.offX = float(slot->x);
+    m_vertexState.offY = float(slot->y);
 }
 
 // Converts the largest mip level into the atlas as ABGR words.
@@ -208,6 +238,9 @@ void GlideRenderer::setTextureData(x86::reg32 tmu, x86::reg32 address, const voi
         m_tmus[tmu]->returnTextureSlot(*info, device.recordingFrameIndex());
     }
     *info = m_tmus[tmu]->reserveTextureSlot(largeMipmap, device.completedFrameIndex());
+    // A bound texture that is downloaded again moves to the new slot.
+    if (address == m_textureAddress)
+        useTextureSlot(*info);
 
     const x86::reg16* pixels = reinterpret_cast<const x86::reg16*>(data);
     uint32_t* atlas = device.atlas() + (*info)->y * s_atlasSize + (*info)->x;
@@ -269,9 +302,9 @@ void GlideRenderer::writeVertex(pf::gxm::Vertex* vertex, const GrVertex* v, cons
     out[5] = word(v->tmuvtx[0].tow);
     out[6] = word(state.colorCombine);
     out[7] = word(state.alphaCombine);
-    out[8] = word(state.texWrap);
+    out[8] = 0;
     out[9] = word(v->oow);
-    out[10] = word(state.atlasSize);
+    out[10] = 0;
     out[11] = word(state.width);
     out[12] = word(state.offX);
     out[13] = word(state.offY);

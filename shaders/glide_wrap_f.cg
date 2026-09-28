@@ -1,0 +1,28 @@
+// Glide triangle fragment program, wrapped texture coordinates: bilinear filter from 4 point reads inside the
+// texture's atlas slot (the atlas is bound with point filtering). Texel centres are at +0.5.
+
+float4 main(
+    float3 vTexCoord : TEXCOORD2,
+    half4  vColor    : COLOR0,
+    half4  vFactor   : TEXCOORD1,
+    float4 vAtlasInfo: TEXCOORD0,
+    uniform sampler2D uTexture) : COLOR
+{
+    float N = vAtlasInfo.x;
+    float2 p = (vTexCoord.xy / vTexCoord.z) - 0.5;
+    float2 i0 = floor(p);
+    float2 f = p - i0;
+    float2 a = i0 - N * floor(i0 * vAtlasInfo.y);            // i0 mod N in [0, N), also for negative i0
+    float2 b = a + 1.0;
+    b = (b >= N) ? 0.0 : b;                                  // (i0 + 1) mod N
+    float2 base = (vAtlasInfo.zw + 0.5) * (1.0 / 2048.0);
+    const float k = 1.0 / 2048.0;
+    half4 c00 = tex2D<half4>(uTexture, base + a * k);
+    half4 c10 = tex2D<half4>(uTexture, base + float2(b.x, a.y) * k);
+    half4 c01 = tex2D<half4>(uTexture, base + float2(a.x, b.y) * k);
+    half4 c11 = tex2D<half4>(uTexture, base + b * k);
+    half4 t = lerp(lerp(c00, c10, (half)f.x), lerp(c01, c11, (half)f.x), (half)f.y);
+    half4 color = vColor * (1.0h + vFactor * (t - 1.0h));      // lerp(colour, colour * texture, factor)
+    clip(color.a - 0.0625h);
+    return color;
+}

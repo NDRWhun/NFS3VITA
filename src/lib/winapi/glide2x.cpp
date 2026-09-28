@@ -164,12 +164,12 @@ typedef x86::reg32 GrTexTable_t;
 //static const GrTexTable_t GR_TEXTABLE_PALETTE = 0x2;
 
 typedef int32_t GrTextureFilterMode_t;
-//static const GrTextureFilterMode_t GR_TEXTUREFILTER_POINT_SAMPLED = 0x0;
-static const GrTextureFilterMode_t GR_TEXTUREFILTER_BILINEAR      = 0x1;
+static const GrTextureFilterMode_t GR_TEXTUREFILTER_POINT_SAMPLED = 0x0;
+//static const GrTextureFilterMode_t GR_TEXTUREFILTER_BILINEAR      = 0x1;
 
 typedef x86::reg32 GrTextureClampMode_t;
 //static const GrTextureClampMode_t GR_TEXTURECLAMP_WRAP   = 0x0;
-//static const GrTextureClampMode_t GR_TEXTURECLAMP_CLAMP  = 0x1;
+static const GrTextureClampMode_t GR_TEXTURECLAMP_CLAMP  = 0x1;
 
 typedef x86::reg32 GrColor_t;
 typedef x86::reg8  GrAlpha_t;
@@ -681,16 +681,22 @@ static void grCullMode(WinApplication* app, x86::CPU& cpu, GrCullMode_t mode)
     //NFS2_ASSERT(false);
 }
 
+// Point sampling needs both filters set to point; mixed filters are bilinear.
 static void grTexFilterMode(WinApplication* app, x86::CPU& cpu, GrChipID_t tmu,
                             GrTextureFilterMode_t minfilter_mode, GrTextureFilterMode_t magfilter_mode)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(tmu);
-    NFS2_USE(minfilter_mode);
-    NFS2_USE(magfilter_mode);
-    NFS2_ASSERT(minfilter_mode == GR_TEXTUREFILTER_BILINEAR);
-    NFS2_ASSERT(magfilter_mode == GR_TEXTUREFILTER_BILINEAR);
+    const bool point = minfilter_mode == GR_TEXTUREFILTER_POINT_SAMPLED && magfilter_mode == GR_TEXTUREFILTER_POINT_SAMPLED;
+    static bool logged = false;
+    if (!logged && (point || minfilter_mode != magfilter_mode))
+    {
+        logged = true;
+        pf::logInfo("grTexFilterMode: min %d mag %d (point sampling applies to clamped textures only)",
+                    int(minfilter_mode), int(magfilter_mode));
+    }
+    s_glideRenderer->setTexPoint(point);
 }
 
 static void grDitherMode(WinApplication* app, x86::CPU& cpu, GrDitherMode_t mode)
@@ -994,15 +1000,19 @@ static void grTexSource(WinApplication* app, x86::CPU& cpu, GrChipID_t tmu, uint
     s_glideRenderer->setTexture(tmu, startAddress);
 }
 
+// Clamps only when both s and t clamp; mixed modes wrap both.
 static void grTexClampMode(WinApplication* app, x86::CPU& cpu, GrChipID_t tmu, GrTextureClampMode_t s_clampmode, GrTextureClampMode_t t_clampmode)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(tmu);
-    NFS2_USE(s_clampmode);
-    NFS2_USE(t_clampmode);
-    /*NFS2_ASSERT(s_clampmode == GR_TEXTURECLAMP_CLAMP);
-    NFS2_ASSERT(t_clampmode == GR_TEXTURECLAMP_CLAMP);*/
+    static bool logged = false;
+    if (!logged && s_clampmode != t_clampmode)
+    {
+        logged = true;
+        pf::logInfo("grTexClampMode: s %u t %u differ, wrapping both", unsigned(s_clampmode), unsigned(t_clampmode));
+    }
+    s_glideRenderer->setTexClamp(s_clampmode == GR_TEXTURECLAMP_CLAMP && t_clampmode == GR_TEXTURECLAMP_CLAMP);
 }
 
 static void grGlideGetVersion(WinApplication* app, x86::CPU& cpu, char* version)

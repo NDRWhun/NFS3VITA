@@ -11,6 +11,7 @@ namespace win32
 
 class Renderer;
 class GlideTMU;
+struct GlTextureSlot;
 
 enum TextureFormat
 {
@@ -68,6 +69,11 @@ public:
     void drawTriangle(const GrVertex* a, const GrVertex* b, const GrVertex* c);
     // Display area for the following triangles; kept across swaps until changed. A new renderer starts with MapBox.
     void setMapping(pf::gxm::Mapping mapping);
+    // Texture addressing for the following triangles: clamp to the edge texels, or wrap (the initial state).
+    void setTexClamp(bool clamp);
+    // Nearest-texel sampling instead of bilinear filtering for the following triangles; wrapped textures are
+    // always filtered bilinearly.
+    void setTexPoint(bool point);
 
     // Closes the active renderer's open draw call and releases its frame before the frame is submitted elsewhere.
     static void endActiveFrame();
@@ -78,13 +84,14 @@ private:
     // Per-state fields of pf::gxm::Vertex, updated when the state changes.
     struct VertexState
     {
-        float colorCombine, alphaCombine, texWrap;
-        float atlasSize, width, offX, offY;
+        float colorCombine, alphaCombine;
+        float width, offX, offY;
     };
 
     pf::gxm::Frame& frame();
     pf::gxm::Frame& beginFrame();
     void flush();
+    void useTextureSlot(const GlTextureSlot* slot);
     static void writeVertex(pf::gxm::Vertex* vertex, const GrVertex* v, const VertexState& state);
 
 private:
@@ -96,6 +103,9 @@ private:
     bool                    m_zTest;
     bool                    m_alphaBlend;
     pf::gxm::Mapping        m_mapping;
+    bool                    m_texClamp;
+    bool                    m_texPoint;
+    x86::reg32              m_textureAddress;   // texture memory address last bound to TMU 0
     GlideTMU*               m_tmus[2];
 };
 
