@@ -1,15 +1,18 @@
 # Sets up the toolchain environment for this shell. Dot-source it: . tools\env.ps1
-# Override paths in tools\env.local.ps1 (ignored by git).
-
-$env:VITASDK = 'E:\vitasdk'
-$env:SCE_PSP2_SDK_DIR = 'h:\Downloads\psvita-sdk-3.570-2019lk\SDK Software\PSVITA\sdk'
+# Machine-specific settings come from the environment or from tools\env.local.ps1 (ignored by git):
+#   $env:VITASDK          = '<VitaSDK root>'                    required
+#   $env:SCE_PSP2_SDK_DIR = '<official PSP2 SDK root>'          optional: recompiles shaders with psp2cgc
+#   $env:VITA3K_EXE       = '<path to the Vita3K executable>'   optional: tools\run-vita3k.ps1
 
 $local = Join-Path $PSScriptRoot 'env.local.ps1'
 if (Test-Path $local) { . $local }
 
-if (-not (Test-Path "$env:VITASDK\bin\arm-vita-eabi-gcc.exe")) { throw "VITASDK not found at $env:VITASDK" }
-if (-not (Test-Path "$env:SCE_PSP2_SDK_DIR\host_tools\bin\psp2cgc.exe")) { throw "psp2cgc not found under $env:SCE_PSP2_SDK_DIR" }
+if (-not $env:VITASDK -or -not (Test-Path (Join-Path $env:VITASDK 'share/vita.toolchain.cmake'))) {
+    throw 'Set VITASDK to your VitaSDK root (environment variable or tools\env.local.ps1).'
+}
+$bin = Join-Path $env:VITASDK 'bin'
+if (($env:Path -split [IO.Path]::PathSeparator) -notcontains $bin) { $env:Path = $bin + [IO.Path]::PathSeparator + $env:Path }
 
-if ($env:Path -notlike "*$env:VITASDK\bin*") { $env:Path = "$env:VITASDK\bin;$env:Path" }
 Write-Host "VITASDK=$env:VITASDK"
-Write-Host "SCE_PSP2_SDK_DIR=$env:SCE_PSP2_SDK_DIR"
+if ($env:SCE_PSP2_SDK_DIR) { Write-Host "SCE_PSP2_SDK_DIR=$env:SCE_PSP2_SDK_DIR (shaders are compiled)" }
+else { Write-Host 'SCE_PSP2_SDK_DIR not set: using the prebuilt shaders in shaders/gxp' }

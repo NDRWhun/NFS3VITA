@@ -1,14 +1,16 @@
 # Installs and/or runs the VPK in Vita3K, then prints the tail of both logs.
 # Usage: tools\run-vita3k.ps1 [-Install] [-TimeoutSec N] [-Vpk path] [-ScreenshotAt 30,60 -ScreenshotDir dir]
-#                             [-AutoInput script.txt]
+#                             [-AutoInput script.txt] [-Vita3K path]
 # -AutoInput copies a "<ms> <key>" script to the data dir for the game to replay (see lib/inputscript.h).
+# -Vita3K defaults to $env:VITA3K_EXE (tools\env.local.ps1); the data path is Vita3K's pref-path.
 param(
     [switch]$Install,
     [int]$TimeoutSec = 0,
     [string]$Vpk = (Join-Path $PSScriptRoot '..\build-release\NFS3VITA.vpk'),
     [int[]]$ScreenshotAt = @(),
     [string]$ScreenshotDir = (Join-Path $PSScriptRoot '..\build-release\shots'),
-    [string]$AutoInput = ''
+    [string]$AutoInput = '',
+    [string]$Vita3K = ''
 )
 
 Add-Type -TypeDefinition @'
@@ -58,12 +60,27 @@ function Save-GameWindow($process, $path) {
     $graphics.Dispose(); $bitmap.Dispose()
 }
 
+# Vita3K's pref-path from the config.yml next to the executable, else its default location.
+function Get-Vita3kPrefPath($exe) {
+    $yml = Join-Path (Split-Path $exe) 'config.yml'
+    if (Test-Path $yml) {
+        $line = Get-Content $yml | Where-Object { $_ -match '^pref-path:\s*(\S.*)$' } | Select-Object -First 1
+        if ($line -and $Matches[1].Trim() -notin @("''", '""')) { return $Matches[1].Trim() }
+    }
+    if ($IsLinux) { return Join-Path $HOME '.local/share/Vita3K/Vita3K' }
+    if ($IsMacOS) { return Join-Path $HOME 'Library/Application Support/Vita3K/Vita3K' }
+    return Join-Path $env:APPDATA 'Vita3K\Vita3K'
+}
+
 $ErrorActionPreference = 'Stop'
-$vita3k = 'E:\DEV\Vita3k\Vita3K.exe'
-$pref = (Join-Path $env:APPDATA 'Vita3K\Vita3K')
-$titleId = 'NFS3VITA1'
 $local = Join-Path $PSScriptRoot 'env.local.ps1'
 if (Test-Path $local) { . $local }
+$vita3k = if ($Vita3K) { $Vita3K } else { $env:VITA3K_EXE }
+if (-not $vita3k -or -not (Test-Path $vita3k)) {
+    throw 'Set VITA3K_EXE (environment variable or tools\env.local.ps1) or pass -Vita3K <path to the Vita3K executable>.'
+}
+$pref = Get-Vita3kPrefPath $vita3k
+$titleId = 'NFS3VITA1'
 
 $dataDir = Join-Path $pref 'ux0\data\nfs3vita'
 $gameLog = Join-Path $dataDir 'nfs3vita.log'

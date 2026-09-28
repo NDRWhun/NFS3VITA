@@ -75,6 +75,11 @@ set(NFS3_INCLUDES
 # Generated game code: large, optimise for size and compile time.
 add_library(nfs3_game OBJECT ${NFS3_DISASM_SOURCES})
 target_compile_options(nfs3_game PRIVATE ${NFS3_COMMON_FLAGS} -O2 -Wno-unused-label -Wno-unused-variable -Wno-unused-parameter)
+# Start-up method registration (nfs3hp.cpp, runs once) and the software renderer (softtria; the port selects the
+# Voodoo2 driver) dominate compile time and gain nothing from -O2: -Og compiles them 4-19x faster.
+set(NFS3_LIGHT_SOURCES ${NFS3_DISASM_SOURCES})
+list(FILTER NFS3_LIGHT_SOURCES INCLUDE REGEX "/(nfs3hp|softtria\\.[^/]+)\\.cpp$")
+set_source_files_properties(${NFS3_LIGHT_SOURCES} PROPERTIES COMPILE_OPTIONS -Og)
 target_compile_definitions(nfs3_game PRIVATE ${NFS3_DEFINES})
 target_include_directories(nfs3_game PRIVATE ${NFS3_INCLUDES})
 

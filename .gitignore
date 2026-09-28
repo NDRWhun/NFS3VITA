@@ -5,6 +5,7 @@
 *.vpk
 *.elf
 *.gxp
+!/shaders/gxp/*.gxp
 param.sfo
 
 # Generated code imported from the upstream recompilation (tools/import-upstream.ps1)
