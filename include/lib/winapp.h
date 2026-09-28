@@ -157,6 +157,9 @@ public:
     inline MemoryAccessor<T> getMemory(x86::reg32 address) { return MemoryAccessor<T>{g_guestBase + address}; }
 
     void registerMethod(x86::reg32 pointer, Method method);
+    // Replaces the method registered at a guest address and returns the previous one. Only before guest code
+    // runs: dynamic_call reads the table without a lock.
+    MethodPtr replaceMethod(x86::reg32 pointer, MethodPtr method);
     // Registered name of the method at a guest address, or nullptr.
     const char* getMethodName(x86::reg32 address) const;
 

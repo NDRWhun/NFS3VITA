@@ -225,6 +225,13 @@ void WinApplication::registerMethod(x86::reg32 pointer, Method method)
     insertMethod(pointer, method.method);
 }
 
+MethodPtr WinApplication::replaceMethod(x86::reg32 pointer, MethodPtr method)
+{
+    const MethodPtr previous = findMethod(pointer);
+    insertMethod(pointer, method);
+    return previous;
+}
+
 const char* WinApplication::getMethodName(x86::reg32 address) const
 {
     std::unordered_map<x86::reg32, std::string>::const_iterator it = m_methodNames.find(address);

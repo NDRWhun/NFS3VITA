@@ -65,8 +65,14 @@ set(NFS3_WINAPI_SOURCES
   src/lib/winapi/dsound/idirectsoundbuffer.cpp
 )
 
+# Port code that works with nfs3.exe guest addresses.
+set(NFS3_GAME_PORT_SOURCES
+  src/nfs3hp/widescreen.cpp
+)
+
 set(NFS3_RUNTIME_SOURCES
   ${NFS3_PLATFORM_SOURCES}
   ${NFS3_LIB_SOURCES}
   ${NFS3_WINAPI_SOURCES}
+  ${NFS3_GAME_PORT_SOURCES}
 )

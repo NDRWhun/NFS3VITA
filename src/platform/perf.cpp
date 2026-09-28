@@ -21,6 +21,7 @@ uint32_t s_intervalStart = 0;
 uint32_t s_frames = 0;
 uint32_t s_drawCalls = 0;
 uint32_t s_triangles = 0;
+uint32_t s_peakTriangles = 0;
 
 double msPerFrame(uint32_t microseconds, uint32_t frames)
 {
@@ -55,6 +56,8 @@ void framePresented(uint32_t drawCalls, uint32_t triangles)
     ++s_frames;
     s_drawCalls += drawCalls;
     s_triangles += triangles;
+    if (triangles > s_peakTriangles)
+        s_peakTriangles = triangles;
     const uint32_t time = now();
     const uint32_t elapsed = time - s_intervalStart;
     if (elapsed < LogIntervalUs)
@@ -69,15 +72,16 @@ void framePresented(uint32_t drawCalls, uint32_t triangles)
     const double gil = msPerFrame(sums[GilWait], frames);
     const double game = frame > wait + gil ? frame - wait - gil : 0.0;
     logInfo("perf: %.1f fps | frame %.1f ms = game %.1f + wait %.1f (fence %.1f) + gil %.1f | render %.1f (queue %.1f)"
-            " | gpu %.1f flip %.1f | %u calls %u tris",
+            " | gpu %.1f flip %.1f | %u calls %u tris (peak %u)",
             double(frames) * 1000000.0 / double(elapsed), frame, game, wait, msPerFrame(sums[FenceWait], frames), gil,
             msPerFrame(sums[Render], frames), msPerFrame(sums[QueueWait], frames),
             msPerFrame(sums[GpuLatency], frames), msPerFrame(sums[FlipWait], frames),
-            s_drawCalls / frames, s_triangles / frames);
+            s_drawCalls / frames, s_triangles / frames, s_peakTriangles);
     s_intervalStart = time;
     s_frames = 0;
     s_drawCalls = 0;
     s_triangles = 0;
+    s_peakTriangles = 0;
 }
 
 }}

@@ -27,12 +27,20 @@ struct Vertex
     float       atlasSize, width, offX, offY;
 };
 
+// Display area that Glide screen coordinates (0..sourceWidth, 0..sourceHeight) are mapped to.
+enum Mapping : uint8_t
+{
+    MapBox,     // the 4:3 game area, Device::viewport()
+    MapFull     // the whole display (widescreen world views)
+};
+
 struct DrawCall
 {
     uint32_t    lastVertex;
     bool        zTest;
     bool        zWrite;
     bool        alphaBlend;
+    Mapping     mapping;
 };
 
 enum FrameKind
@@ -53,6 +61,7 @@ struct Frame
     uint32_t                sourceHeight;
     bool                    clear;
     uint32_t                clearColor;     // 0x00RRGGBB
+    bool                    wide;           // a draw call uses MapFull
     uint32_t                vertexCount;
     std::vector<DrawCall>   drawCalls;
     // GPU-visible buffers owned by the device, valid while the frame is acquired.

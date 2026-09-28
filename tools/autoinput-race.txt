@@ -1,3 +1,6 @@
 5000 enter
 8000 enter
-11000 enter
+12000 up
+14000 up
+16000 up
+18000 enter

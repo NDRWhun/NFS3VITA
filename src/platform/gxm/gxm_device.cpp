@@ -204,7 +204,8 @@ struct Device::Impl
     unsigned int            glideTextureUnit = 0;
     unsigned int            blitTextureUnit = 0;
 
-    // Static geometry: [0..3] full screen quad, [4..7] game viewport quad
+    // Static geometry: [0..3] full screen quad, [4..7] game viewport quad, [8..11] and [12..15] the bars left and
+    // right of the game viewport
     QuadVertex*             quadVertices = nullptr;
     SceUID                  quadVerticesUid = InvalidUid;
     uint16_t*               quadIndices = nullptr;
@@ -241,6 +242,7 @@ struct Device::Impl
     volatile bool           running = false;
     Rect                    viewport = { 0, 0, DisplayWidth, DisplayHeight };
     uint32_t                endSceneTime = 0;       // render thread: perf::now() after the last game frame's scene
+    bool                    wideShown = false;      // render thread: the last game frame drew outside the viewport
 
     bool initCore();
     bool initDisplay();
@@ -252,6 +254,7 @@ struct Device::Impl
     void run();
     void beginScene(SceGxmColorSurface* surface, SceGxmSyncObject* sync);
     void renderFrame(Frame& frame, Slot& slot);
+    void setGlideMapping(const Rect& rect, float sourceWidth, float sourceHeight);
     void renderDialogFrame();
     void drawQuad(uint32_t first, const SceGxmTexture* texture, SceGxmVertexProgram* vp, SceGxmFragmentProgram* fp, const float* color);
     void drawImage(void* image);
@@ -518,7 +521,7 @@ bool Device::Impl::initPrograms()
 
 bool Device::Impl::initBuffers()
 {
-    quadVertices = static_cast<QuadVertex*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, sizeof(QuadVertex) * 8, 4,
+    quadVertices = static_cast<QuadVertex*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, sizeof(QuadVertex) * 16, 4,
                                                      SCE_GXM_MEMORY_ATTRIB_READ, &quadVerticesUid));
     quadIndices = static_cast<uint16_t*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, sizeof(uint16_t) * 4, 4,
                                                   SCE_GXM_MEMORY_ATTRIB_READ, &quadIndicesUid));
@@ -568,6 +571,15 @@ void Device::Impl::updateQuads()
     quadVertices[5] = { x1, y0, 1.0f, 0.0f };
     quadVertices[6] = { x0, y1, 0.0f, 1.0f };
     quadVertices[7] = { x1, y1, 1.0f, 1.0f };
+
+    quadVertices[8] = { fx0, fy0, 0.0f, 0.0f };
+    quadVertices[9] = { x0, fy0, 0.0f, 0.0f };
+    quadVertices[10] = { fx0, fy1, 0.0f, 0.0f };
+    quadVertices[11] = { x0, fy1, 0.0f, 0.0f };
+    quadVertices[12] = { x1, fy0, 0.0f, 0.0f };
+    quadVertices[13] = { fx1, fy0, 0.0f, 0.0f };
+    quadVertices[14] = { x1, fy1, 0.0f, 0.0f };
+    quadVertices[15] = { fx1, fy1, 0.0f, 0.0f };
 }
 
 int Device::Impl::threadEntry(void* self)
@@ -688,6 +700,7 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
         sceGxmTextureSetVAddrMode(&texture, SCE_GXM_TEXTURE_ADDR_CLAMP);
         drawQuad(0, nullptr, clearV, clearF, black);
         drawQuad(4, &texture, blitV, blitF, nullptr);
+        wideShown = false;
     }
     else
     {
@@ -698,33 +711,40 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
                 float((frame.clearColor >> 8) & 0xff) / 255.0f,
                 float(frame.clearColor & 0xff) / 255.0f,
                 1.0f };
-            drawQuad(0, nullptr, clearV, clearF, black);
-            drawQuad(4, nullptr, clearV, clearF, color);
+            if (frame.wide)
+            {
+                drawQuad(0, nullptr, clearV, clearF, color);
+            }
+            else
+            {
+                drawQuad(0, nullptr, clearV, clearF, black);
+                drawQuad(4, nullptr, clearV, clearF, color);
+            }
         }
         else
         {
-            // No clear: keep drawing over the previously displayed frame.
+            // No clear: keep drawing over the previously displayed frame, without world pixels this frame
+            // does not cover beside the game area.
             drawImage(previousImage());
+            if (wideShown && !frame.wide)
+            {
+                drawQuad(8, nullptr, clearV, clearF, black);
+                drawQuad(12, nullptr, clearV, clearF, black);
+            }
         }
+        wideShown = frame.wide;
 
         if (frame.vertexCount)
         {
             const float sw = float(frame.sourceWidth ? frame.sourceWidth : 640);
             const float sh = float(frame.sourceHeight ? frame.sourceHeight : 480);
-            const float viewportUniform[4] = {
-                2.0f * float(viewport.w) / (sw * DisplayWidth),
-                -2.0f * float(viewport.h) / (sh * DisplayHeight),
-                2.0f * float(viewport.x) / DisplayWidth - 1.0f,
-                1.0f - 2.0f * float(viewport.y) / DisplayHeight };
+            const Rect full = { 0, 0, DisplayWidth, DisplayHeight };
 
             sceGxmSetVertexProgram(context, glideV);
-            void* uniforms = nullptr;
-            sceGxmReserveVertexDefaultUniformBuffer(context, &uniforms);
-            sceGxmSetUniformDataF(uniforms, glideViewportParam, 0, 4, viewportUniform);
             sceGxmSetFragmentTexture(context, glideTextureUnit, &atlasTexture);
             sceGxmSetVertexStream(context, 0, frame.vertices);
-            sceGxmSetRegionClip(context, SCE_GXM_REGION_CLIP_OUTSIDE, viewport.x, viewport.y,
-                                viewport.x + viewport.w - 1, viewport.y + viewport.h - 1);
+            Mapping mapping = frame.drawCalls.empty() ? MapBox : frame.drawCalls.front().mapping;
+            setGlideMapping(mapping == MapFull ? full : viewport, sw, sh);
 
             uint32_t first = 0;
             for (const DrawCall& call : frame.drawCalls)
@@ -732,6 +752,11 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
                 uint32_t count = call.lastVertex - first;
                 if (count)
                 {
+                    if (call.mapping != mapping)
+                    {
+                        mapping = call.mapping;
+                        setGlideMapping(mapping == MapFull ? full : viewport, sw, sh);
+                    }
                     sceGxmSetFrontDepthFunc(context, call.zTest ? SCE_GXM_DEPTH_FUNC_LESS_EQUAL : SCE_GXM_DEPTH_FUNC_ALWAYS);
                     sceGxmSetFrontDepthWriteEnable(context, call.zWrite ? SCE_GXM_DEPTH_WRITE_ENABLED : SCE_GXM_DEPTH_WRITE_DISABLED);
                     sceGxmSetFragmentProgram(context, call.alphaBlend ? glideFBlend : glideFAdd);
@@ -751,6 +776,21 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
     if (perf::enabled())
         endSceneTime = perf::now();
     finishFrame(frame.vblanks, frame.frameIndex);
+}
+
+// Maps Glide screen coordinates (0..sourceWidth, 0..sourceHeight) onto a display rectangle for the following
+// draws: a new default uniform buffer for glide_v and a region clip (tile granular; the game clips polygons itself).
+void Device::Impl::setGlideMapping(const Rect& rect, float sourceWidth, float sourceHeight)
+{
+    const float viewportUniform[4] = {
+        2.0f * float(rect.w) / (sourceWidth * DisplayWidth),
+        -2.0f * float(rect.h) / (sourceHeight * DisplayHeight),
+        2.0f * float(rect.x) / DisplayWidth - 1.0f,
+        1.0f - 2.0f * float(rect.y) / DisplayHeight };
+    void* uniforms = nullptr;
+    sceGxmReserveVertexDefaultUniformBuffer(context, &uniforms);
+    sceGxmSetUniformDataF(uniforms, glideViewportParam, 0, 4, viewportUniform);
+    sceGxmSetRegionClip(context, SCE_GXM_REGION_CLIP_OUTSIDE, rect.x, rect.y, rect.x + rect.w - 1, rect.y + rect.h - 1);
 }
 
 // Re-presents the last image so a system dialog keeps updating while no game frame arrives.
@@ -932,6 +972,7 @@ Frame& Device::acquireFrame()
         frame.sourceHeight = 0;
         frame.clear = false;
         frame.clearColor = 0;
+        frame.wide = false;
         frame.vertexCount = 0;
         frame.drawCalls.clear();
         impl.frameAcquired = true;

@@ -22,6 +22,12 @@ void GlideRenderer::endActiveFrame()
     }
 }
 
+void GlideRenderer::setActiveMapping(pf::gxm::Mapping mapping)
+{
+    if (s_active)
+        s_active->setMapping(mapping);
+}
+
 GlideRenderer::GlideRenderer(Renderer* renderer)
     :   m_renderer(renderer)
     ,   m_frame(nullptr)
@@ -30,6 +36,7 @@ GlideRenderer::GlideRenderer(Renderer* renderer)
     ,   m_zBuffer(true)
     ,   m_zTest(true)
     ,   m_alphaBlend(true)
+    ,   m_mapping(pf::gxm::MapBox)
 {
     m_tmus[0] = new GlideTMU(s_atlasSize);
     m_tmus[1] = nullptr;
@@ -95,7 +102,10 @@ void GlideRenderer::flush()
     call.zTest = m_zTest;
     call.zWrite = m_zBuffer;
     call.alphaBlend = m_alphaBlend;
+    call.mapping = m_mapping;
     f->drawCalls.push_back(call);
+    if (m_mapping == pf::gxm::MapFull)
+        f->wide = true;
     m_flushedVertices = f->vertexCount;
 }
 
@@ -138,6 +148,15 @@ void GlideRenderer::setZTest(bool enable)
     {
         flush();
         m_zTest = enable;
+    }
+}
+
+void GlideRenderer::setMapping(pf::gxm::Mapping mapping)
+{
+    if (mapping != m_mapping)
+    {
+        flush();
+        m_mapping = mapping;
     }
 }
 

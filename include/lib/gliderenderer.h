@@ -4,7 +4,7 @@
 #include <lib/winapp.h>
 #include <winapi/types.h>
 
-namespace pf { namespace gxm { struct Frame; struct Vertex; } }
+namespace pf { namespace gxm { struct Frame; struct Vertex; enum Mapping : uint8_t; } }
 
 namespace win32
 {
@@ -66,9 +66,13 @@ public:
     void setTextureData(x86::reg32 tmu, x86::reg32 address, const void* data,
                         x86::reg32 largeMipmap, x86::reg32 smallMimmap, TextureFormat format);
     void drawTriangle(const GrVertex* a, const GrVertex* b, const GrVertex* c);
+    // Display area for the following triangles; kept across swaps until changed. A new renderer starts with MapBox.
+    void setMapping(pf::gxm::Mapping mapping);
 
     // Closes the active renderer's open draw call and releases its frame before the frame is submitted elsewhere.
     static void endActiveFrame();
+    // setMapping on the active renderer, if there is one.
+    static void setActiveMapping(pf::gxm::Mapping mapping);
 
 private:
     // Per-state fields of pf::gxm::Vertex, updated when the state changes.
@@ -91,6 +95,7 @@ private:
     bool                    m_zBuffer;
     bool                    m_zTest;
     bool                    m_alphaBlend;
+    pf::gxm::Mapping        m_mapping;
     GlideTMU*               m_tmus[2];
 };
 

@@ -8,6 +8,7 @@
 #include <fpu.h>
 #include <mmx.h>
 #include <nfs3hp.h>
+#include "widescreen.h"
 #include <psp2/ctrl.h>
 #include <psp2/power.h>
 #include <psp2/kernel/processmgr.h>
@@ -127,6 +128,10 @@ int main(int, char**)
         app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "D3D Device", new win32::RegistryValue(x86::reg32(0)));
         app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "Triple Buffer", new win32::RegistryValue(x86::reg32(0)));
         app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "Hardware Acceleration", new win32::RegistryValue(x86::reg32(1)));
+        if (pf::Config::getBool("widescreen", true))
+            nfs3hp::widescreen::install(app);
+        else
+            pf::logInfo("widescreen: off");
         app.execute();
     }
     pf::logInfo("NFS3VITA exiting");
