@@ -273,6 +273,10 @@ File::~File()
 
 x86::reg32 File::seek(x86::reg32 mode, x86::sreg32 offset)
 {
+    // Vita newlib's lseek dereferences a null descriptor for an invalid fd (unlike read/write/fstat),
+    // e.g. the stdin handle: fd 0 cannot be dup'ed. Fail like Windows does for a console handle.
+    if (m_file < 0)
+        return x86::reg32(-1);
     int seekMode = 0;
     switch(mode)
     {
@@ -308,6 +312,8 @@ x86::reg32 File::write(const void* buffer, x86::reg32 max, x86::reg32* totalWrit
 x86::reg32 File::truncate()
 {
     pf::logDebug("Truncating file %s", m_filename.c_str());
+    if (m_file < 0)
+        return 0;
     return ftruncate(m_file, lseek(m_file, 0, SEEK_CUR)) == 0;
 }
 
