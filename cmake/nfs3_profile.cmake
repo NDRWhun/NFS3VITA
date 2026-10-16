@@ -29,4 +29,4 @@ target_sources(nfs3_runtime PRIVATE src/platform/prof.cpp)
 target_compile_definitions(nfs3_runtime PRIVATE NFS3_PROFILE)
 target_compile_definitions(NFS3VITA.elf PRIVATE NFS3_PROFILE)
 # prof.cpp registers every guest thread for sampling around WinApplication::runThread.
-target_link_options(NFS3VITA.elf PRIVATE -Wl,--wrap=_ZN5win3214WinApplication9runThreadERN3x863CPUEjjb)
+target_link_options(NFS3VITA.elf PRIVATE -Wl,--wrap=_ZN5win3214WinApplication9runThreadERN3x863CPUEjjbb)

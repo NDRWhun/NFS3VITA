@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <type_traits>
 
 namespace pf { namespace prof {
 
@@ -77,10 +78,10 @@ void unregisterThread(int index)
         return;
     Registration& registration = s_threads[index];
     registration.cpu.store(nullptr);
+    // The sampler is reading two words through the CPU pointer; sleep, since spinning can starve the sampler when
+    // this thread has the higher priority on the sampler's core.
     while (registration.reading.load())
-    {
-        // The sampler is reading two words through the CPU pointer.
-    }
+        sceKernelDelayThread(50);
     registration.claimed.store(false, std::memory_order_release);
 }
 
@@ -438,15 +439,20 @@ void stop()
 
 // The NFS3_PROFILE link wraps WinApplication::runThread (-Wl,--wrap, cmake/nfs3_profile.cmake); all its callers
 // (Application::execute, guest threads, timer callbacks) are in other objects. Each thread is sampled while it runs.
-extern "C" int __real__ZN5win3214WinApplication9runThreadERN3x863CPUEjjb(win32::WinApplication* app, x86::CPU& cpu,
-    x86::reg32 entryPoint, x86::reg32 parameter, bool threadLock);
+// The wrapped symbol is the mangled signature below: a signature change must update both, or nothing is sampled.
+static_assert(std::is_same<decltype(&win32::WinApplication::runThread),
+                           int (win32::WinApplication::*)(x86::CPU&, x86::reg32, x86::reg32, bool, bool)>::value,
+              "runThread changed: update the wrapped symbol here and in cmake/nfs3_profile.cmake");
 
-extern "C" int __wrap__ZN5win3214WinApplication9runThreadERN3x863CPUEjjb(win32::WinApplication* app, x86::CPU& cpu,
-    x86::reg32 entryPoint, x86::reg32 parameter, bool threadLock)
+extern "C" int __real__ZN5win3214WinApplication9runThreadERN3x863CPUEjjbb(win32::WinApplication* app, x86::CPU& cpu,
+    x86::reg32 entryPoint, x86::reg32 parameter, bool threadLock, bool preempts);
+
+extern "C" int __wrap__ZN5win3214WinApplication9runThreadERN3x863CPUEjjbb(win32::WinApplication* app, x86::CPU& cpu,
+    x86::reg32 entryPoint, x86::reg32 parameter, bool threadLock, bool preempts)
 {
     const int index = pf::prof::registerThread(cpu, entryPoint);
-    const int result = __real__ZN5win3214WinApplication9runThreadERN3x863CPUEjjb(app, cpu, entryPoint, parameter,
-                                                                                 threadLock);
+    const int result = __real__ZN5win3214WinApplication9runThreadERN3x863CPUEjjbb(app, cpu, entryPoint, parameter,
+                                                                                  threadLock, preempts);
     pf::prof::unregisterThread(index);
     return result;
 }
