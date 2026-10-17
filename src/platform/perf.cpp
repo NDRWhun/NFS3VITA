@@ -28,7 +28,6 @@ uint32_t s_frames = 0;
 uint32_t s_drawCalls = 0;
 uint32_t s_triangles = 0;
 uint32_t s_peakTriangles = 0;
-uint32_t s_opaqueTriangles = 0;
 
 double msPerFrame(uint32_t microseconds, uint32_t frames)
 {
@@ -74,11 +73,10 @@ void gpuBusy(uint32_t microseconds)
     s_gpuBusySum.fetch_add(microseconds, std::memory_order_relaxed);
 }
 
-void framePresented(uint32_t drawCalls, uint32_t triangles, uint32_t opaqueTriangles)
+void framePresented(uint32_t drawCalls, uint32_t triangles)
 {
     ++s_frames;
     s_drawCalls += drawCalls;
-    s_opaqueTriangles += opaqueTriangles;
     s_triangles += triangles;
     if (triangles > s_peakTriangles)
         s_peakTriangles = triangles;
@@ -101,14 +99,14 @@ void framePresented(uint32_t drawCalls, uint32_t triangles, uint32_t opaqueTrian
     const uint32_t gpuBusyCount = s_gpuBusyCount.exchange(0, std::memory_order_relaxed);
     const uint32_t gpuBusySum = s_gpuBusySum.exchange(0, std::memory_order_relaxed);
     logInfo("perf: %.1f fps | frame %.1f ms = game %.1f (preempted %.1f) + wait %.1f (fence %.1f) + gil %.1f"
-            " | render %.1f (queue %.1f) | gpu %.1f flip %.1f busy %.1f (%u%%) | %u calls %u tris (peak %u) %u opaque"
+            " | render %.1f (queue %.1f) | gpu %.1f flip %.1f busy %.1f (%u%%) | %u calls %u tris (peak %u)"
             " | preempt %.0f/s wait %.2f max %.1f ms",
             double(frames) * 1000000.0 / double(elapsed), frame, game, msPerFrame(sums[Preempted], frames), wait,
             msPerFrame(sums[FenceWait], frames), gil,
             msPerFrame(sums[Render], frames), msPerFrame(sums[QueueWait], frames),
             msPerFrame(sums[GpuLatency], frames), msPerFrame(sums[FlipWait], frames),
             gpuBusyCount ? msPerFrame(gpuBusySum, gpuBusyCount) : 0.0, gpuBusyCount * 100 / frames,
-            s_drawCalls / frames, s_triangles / frames, s_peakTriangles, s_opaqueTriangles / frames,
+            s_drawCalls / frames, s_triangles / frames, s_peakTriangles,
             double(preempts) * 1000000.0 / double(elapsed), preempts ? msPerFrame(preemptSum, preempts) : 0.0,
             double(preemptMax) / 1000.0);
     if (Reporter reporter = s_reporter.load(std::memory_order_acquire))
@@ -118,7 +116,6 @@ void framePresented(uint32_t drawCalls, uint32_t triangles, uint32_t opaqueTrian
     s_drawCalls = 0;
     s_triangles = 0;
     s_peakTriangles = 0;
-    s_opaqueTriangles = 0;
 }
 
 void setReporter(Reporter reporter)

@@ -699,7 +699,6 @@ void Device::Impl::run()
         const uint32_t start = timed ? perf::now() : 0;
         const uint32_t drawCalls = uint32_t(frame.drawCalls.size());
         const uint32_t triangles = frame.vertexCount / 3;
-        const uint32_t opaqueTriangles = frame.opaqueTriangles;
         renderFrame(frame, slots[renderSlot]);
         const uint32_t end = timed ? perf::now() : 0;
         renderSlot = (renderSlot + 1) % FrameSlots;
@@ -707,7 +706,7 @@ void Device::Impl::run()
         if (timed)
         {
             perf::add(perf::Render, end - start);
-            perf::framePresented(drawCalls, triangles, opaqueTriangles);
+            perf::framePresented(drawCalls, triangles);
         }
     }
 }
@@ -1078,7 +1077,6 @@ Frame& Device::acquireFrame()
         frame.clearColor = 0;
         frame.wide = false;
         frame.vertexCount = 0;
-        frame.opaqueTriangles = 0;
         frame.drawCalls.clear();
         impl.frameAcquired = true;
     }

@@ -84,7 +84,6 @@ struct Frame
     uint32_t                clearColor;     // 0x00RRGGBB
     bool                    wide;           // a draw call uses MapFull
     uint32_t                vertexCount;
-    uint32_t                opaqueTriangles;    // triangles that blend with 1-src-alpha at alpha 1 everywhere
     std::vector<DrawCall>   drawCalls;
     // GPU-visible buffers owned by the device, valid while the frame is acquired.
     Vertex*                 vertices;

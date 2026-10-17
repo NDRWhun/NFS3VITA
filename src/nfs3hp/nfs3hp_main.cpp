@@ -16,6 +16,7 @@
 #include "mastertimer.h"
 #include "menulists.h"
 #include "settings.h"
+#include "thrashdraw.h"
 #include "widescreen.h"
 #include <psp2/ctrl.h>
 #include <psp2/power.h>
@@ -143,6 +144,7 @@ int main(int, char**)
         if (pf::perf::enabled())
             nfs3hp::gamespeed::install(app);
         nfs3hp::fog::install(app);
+        nfs3hp::thrashdraw::install(app);
         nfs3hp::menulists::install(app);
         nfs3hp::settings::install(app);
         if (pf::Config::getBool("native_timer", true))

@@ -34,7 +34,7 @@ void preemptWait(uint32_t microseconds);
 // completion until its own completion; only reported for frames whose completion time is known.
 void gpuBusy(uint32_t microseconds);
 // Render thread, after each game frame it queued; logs one line about every 5 s.
-void framePresented(uint32_t drawCalls, uint32_t triangles, uint32_t opaqueTriangles);
+void framePresented(uint32_t drawCalls, uint32_t triangles);
 // Called on the render thread after each log line with the interval length in microseconds.
 typedef void (*Reporter)(uint32_t intervalUs);
 void setReporter(Reporter reporter);

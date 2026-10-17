@@ -43,7 +43,6 @@ GlideRenderer::GlideRenderer(Renderer* renderer)
     ,   m_mipMode(pf::gxm::MipNone)
     ,   m_textureAddress(0)
     ,   m_texture(nullptr)
-    ,   m_textureOpaque(false)
 {
     s_active = this;
 }
@@ -218,7 +217,7 @@ GlideRenderer::TextureEntry* GlideRenderer::textureEntry(x86::reg32 address, boo
     {
         if (!create || index >= s_maxTextures)
             return nullptr;
-        m_textures.resize(index + 1, TextureEntry{ nullptr, 0, 0, false });
+        m_textures.resize(index + 1, TextureEntry{ nullptr, 0, 0 });
     }
     return &m_textures[index];
 }
@@ -231,7 +230,6 @@ void GlideRenderer::bindTexture(const TextureEntry& entry)
         flush();
         m_texture = entry.texture;
     }
-    m_textureOpaque = entry.opaque;
 }
 
 void GlideRenderer::setTexture(x86::reg32 tmu, x86::reg32 address, x86::reg32 largeLod, x86::reg32 smallLod)
@@ -264,16 +262,6 @@ void GlideRenderer::setTextureData(x86::reg32 tmu, x86::reg32 address, const voi
     const x86::reg32 levels = smallLod - largeLod + 1;
     const x86::reg16* texels = static_cast<const x86::reg16*>(data);
 
-    bool opaque = true;
-    if (format != TF_RGB_565)
-    {
-        const x86::reg16 alphaMask = format == TF_ARGB_1555 ? 0x8000 : 0xf000;
-        x86::reg32 count = 0;
-        for (x86::reg32 level = 0; level < levels; ++level)
-            count += (size >> level) * (size >> level);
-        for (x86::reg32 i = 0; i < count && opaque; ++i)
-            opaque = (texels[i] & alphaMask) == alphaMask;
-    }
     if (levels > 1)
     {
         static bool logged = false;
@@ -305,7 +293,6 @@ void GlideRenderer::setTextureData(x86::reg32 tmu, x86::reg32 address, const voi
     entry->texture = device.createTexture(gxmFormat, size, levels, texels);
     entry->largeLod = largeLod;
     entry->smallLod = smallLod;
-    entry->opaque = opaque;
     // A bound texture that is downloaded again is drawn from its new data.
     if (bound)
         bindTexture(*entry);
@@ -319,12 +306,6 @@ static inline x86::reg32 word(float value)
     x86::reg32 result;
     memcpy(&result, &value, sizeof(result));
     return result;
-}
-
-// The alpha byte writeVertex stores.
-static inline x86::reg32 vertexAlpha(const GrVertex* v)
-{
-    return x86::reg32(v->a) & 0xff;
 }
 
 // Stores one vertex as 9 words in address order; the vertex buffer is uncached GPU memory.
@@ -356,10 +337,20 @@ void GlideRenderer::drawTriangle(const GrVertex* a, const GrVertex* b, const GrV
     writeVertex(out + 1, b, state);
     writeVertex(out + 2, c, state);
     f.vertexCount = count + 3;
-    // Alpha 1 everywhere with 1-src-alpha blending: the result does not depend on the background.
-    if (m_alphaBlend && (state.alphaCombine == 0.f || m_textureOpaque) && vertexAlpha(a) == 0xff &&
-        vertexAlpha(b) == 0xff && vertexAlpha(c) == 0xff)
-        ++f.opaqueTriangles;
+}
+
+GlideRenderer* GlideRenderer::active()
+{
+    return s_active;
+}
+
+pf::gxm::Vertex* GlideRenderer::appendTriangles(x86::reg32 count)
+{
+    pf::gxm::Frame& f = frame();
+    const x86::reg32 first = f.vertexCount;
+    NFS2_ASSERT(first + 3 * count <= pf::gxm::MaxVertices);
+    f.vertexCount = first + 3 * count;
+    return f.vertices + first;
 }
 
 }

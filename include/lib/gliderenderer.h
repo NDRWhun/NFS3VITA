@@ -74,6 +74,14 @@ public:
     // Mipmap use for the following triangles (grTexMipMapMode); a new renderer starts with MipNone.
     void setMipMode(pf::gxm::MipMode mode);
 
+    // Room for count triangles in the open draw call, recorded with the current state: the caller stores their
+    // 3 * count vertices there (combine factors from colorCombine/alphaCombine).
+    pf::gxm::Vertex* appendTriangles(x86::reg32 count);
+    float colorCombine() const { return m_vertexState.colorCombine; }
+    float alphaCombine() const { return m_vertexState.alphaCombine; }
+
+    // The renderer of the open Glide window, or null.
+    static GlideRenderer* active();
     // Closes the active renderer's open draw call and releases its frame before the frame is submitted elsewhere.
     static void endActiveFrame();
     // setMapping on the active renderer, if there is one.
@@ -92,7 +100,6 @@ private:
         pf::gxm::Texture*   texture;
         x86::reg32          largeLod;
         x86::reg32          smallLod;
-        bool                opaque;     // every texel has alpha 255
     };
 
     pf::gxm::Frame& frame();
@@ -116,7 +123,6 @@ private:
     pf::gxm::MipMode        m_mipMode;
     x86::reg32              m_textureAddress;   // texture memory address last bound to TMU 0
     const pf::gxm::Texture* m_texture;          // texture of the open draw call
-    bool                    m_textureOpaque;
     std::vector<TextureEntry> m_textures;
 };
 
