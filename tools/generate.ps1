@@ -1,5 +1,5 @@
 # Generates the C++ recompilation of the game into src/nfs3hp/disassembly with tools/recompiler.
-# Usage: tools\generate.ps1 -Binaries <dir with the original nfs3.exe, eacsnd.dll, softtria.dll, voodoo2a.dll>
+# Usage: tools\generate.ps1 -Binaries <dir with nfs3.exe (original or Modern Patch 1.6.1), eacsnd.dll, softtria.dll, voodoo2a.dll>
 #        [-Out <dir>] [-Analysis <file.json>]
 # Needs Python 3 with capstone (pip install -r tools/recompiler/requirements.txt).
 param(
@@ -39,7 +39,7 @@ try {
     $names = @{}
     foreach ($file in $generated) { $names[$file.Name] = $true }
     $removed = 0
-    foreach ($file in Get-ChildItem $Out -File -Include *.cpp, *.h) {
+    foreach ($file in Get-ChildItem (Join-Path $Out '*') -File -Include *.cpp, *.h) {
         if (-not $names.ContainsKey($file.Name)) { Remove-Item $file.FullName -Force; $removed++ }
     }
     Write-Host "Generated $($generated.Count) files into $Out ($changed changed, $removed removed)"

@@ -89,7 +89,7 @@ def _load_exe(path, rebase_address):
             sections.append((None, s.VirtualAddress + image_base, s.SizeOfRawData, s.Name.rstrip(b'\x00').replace(b'.', b'_'), False, False))
     entry_point = nfs2exe.OPTIONAL_HEADER.AddressOfEntryPoint + image_base
     exported_symbols = [(image_base+h['RVA'],h['Name']) for h in nfs2exe.dump_dict().get('Exported symbols', [])[1:]]
-    return (sections, entry_point, dlls, exported_symbols)
+    return (sections, entry_point, dlls, exported_symbols, image_base)
 
 
 def _reduce(subroutines, found_subroutines, merge_hints):
@@ -135,7 +135,8 @@ def _reduce(subroutines, found_subroutines, merge_hints):
 class Module:
     def __init__(self, application_name, exe_path, rebase_address):
         self.application_name = application_name
-        self.sections, self.entry_point, self.dll_imports, self.exported_symbols = _load_exe(exe_path, rebase_address)
+        loaded = _load_exe(exe_path, rebase_address)
+        self.sections, self.entry_point, self.dll_imports, self.exported_symbols, self.base_address = loaded
         self.subroutines = []
         for data, address, length, name, ro, code in self.sections:
             print('%s section 0x%08x - 0x%08x' % (name, address, address + length))
@@ -155,6 +156,10 @@ class Module:
             src.write(',\n    '.join(data_lines))
             src.write('\n};\n'
                         '}\n')
+
+    def end_address(self):
+        """End of the highest loaded section; the next module is rebased there."""
+        return self.sections[-1][1] + self.sections[-1][2]
 
     def get_code_sections(self):
         return [s for s in self.sections if s[5]]

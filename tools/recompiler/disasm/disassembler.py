@@ -30,7 +30,32 @@ nops = (
 )
 
 
-def realign(application, section, current_address):
+def skip_nop_run(application, section, current_address):
+    """Skips a run of two or more single-byte nops (padding left by in-place binary patches); returns the new
+    address and the skipped bytes."""
+    end = application.get_address_end(section)
+    address = current_address
+    while address < end and application.read_section_data(section, address, address + 1) == b'\x90':
+        address += 1
+    if address - current_address < 2:
+        return current_address, b''
+    return address, application.read_section_data(section, current_address, address)
+
+
+def realign(application, section, current_address, skip_nop_runs=False):
+    # A nop run is not reported as skipped code (which keeps the next code a separate function): patches also leave
+    # them inside functions, between a jump and its targets.
+    if skip_nop_runs:
+        address, nop_run = skip_nop_run(application, section, current_address)
+        if nop_run:
+            return (address, '')
+    current_address, skipped_code = align(application, section, current_address)
+    if skip_nop_runs:
+        current_address, _ = skip_nop_run(application, section, current_address)
+    return (current_address, skipped_code)
+
+
+def align(application, section, current_address):
     new_current_address = (current_address + 15) & 0xfffffff0
     skipped_code = application.read_section_data(section, current_address, new_current_address)
     if current_address != new_current_address:
@@ -60,13 +85,13 @@ def realign(application, section, current_address):
 
 def disassemble(name, exe_path, data_segments=[], known_subroutines=[], split_instructions=[],
                 thread_routines=[], thread_segments=[], merge_hints=[], skip_instructions=[],
-                type=Application, rebase_after=None):
+                type=Application, rebase_after=None, skip_nop_runs=False):
     disassembler = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     disassembler.detail = True
 
     rebase_address = 0
     if rebase_after:
-        rebase_address = rebase_after.sections[-1][1] + rebase_after.sections[-1][2]
+        rebase_address = rebase_after.end_address()
     application = type(name, exe_path, rebase_address)
 
     subroutines_to_check = []
@@ -80,7 +105,7 @@ def disassemble(name, exe_path, data_segments=[], known_subroutines=[], split_in
                 jump_table = []
                 labels = []
 
-                current_address, skipped_code = realign(application, section, current_address)
+                current_address, skipped_code = realign(application, section, current_address, skip_nop_runs)
                 for data_segment in data_segments:
                     if data_segment[0] == current_address:
                         current_address = data_segment[1]
@@ -100,7 +125,7 @@ def disassemble(name, exe_path, data_segments=[], known_subroutines=[], split_in
                 if current_address >= application.get_address_end(section):
                     break
 
-                current_address, skipped_code_2 = realign(application, section, current_address)
+                current_address, skipped_code_2 = realign(application, section, current_address, skip_nop_runs)
                 skipped_code = skipped_code_2 or skipped_code
 
                 if current_address >= application.get_address_end(section):

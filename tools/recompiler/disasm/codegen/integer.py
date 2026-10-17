@@ -422,6 +422,58 @@ def cg_bsr(ctx, dst, src):
     return block(lines)
 
 
+# ---- bit tests: CF = the selected bit; the other flags are left as they were -------------------------------
+
+def _bit_test(ctx, base, offset, update):
+    """bt/bts/btr/btc. A register offset into memory selects the dword at base + 4 * (offset >> 5)."""
+    bits = base.size * 8
+    t = T(bits)
+    lines = []
+    if offset.type == X.X86_OP_IMM:
+        lines.append('const unsigned n = %d;' % (offset.imm & (bits - 1)))
+        setup, cur, writer = ctx.bind(base)
+    else:
+        lines.append('const x86::reg32 o = %s;' % ctx.val(offset, 32))
+        lines.append('const unsigned n = o & %d;' % (bits - 1))
+        if base.type == X.X86_OP_MEM:
+            a = 'a_dst'
+            setup = ['const x86::reg32 %s = %s + 4u * x86::reg32(x86::sreg32(o) >> 5);' % (a, ctx.address(base))]
+            cur, writer = ctx.load(bits, a), (lambda v: ctx.store(bits, a, v))
+        else:
+            setup, cur, writer = ctx.bind(base)
+    lines = lines + setup + ['const %s v = %s;' % (t, cur), 'const %s m = %s(%s(1) << n);' % (t, t, t)]
+    lines += ctx.set_flags({'cf': '((v & m) != 0)'})
+    if update:
+        lines += writer(update)
+    return block(lines)
+
+
+def cg_bt(ctx, base, offset):
+    return _bit_test(ctx, base, offset, None)
+
+
+def cg_bts(ctx, base, offset):
+    return _bit_test(ctx, base, offset, '%s(v | m)' % T(base.size * 8))
+
+
+def cg_btr(ctx, base, offset):
+    return _bit_test(ctx, base, offset, '%s(v & ~m)' % T(base.size * 8))
+
+
+def cg_btc(ctx, base, offset):
+    return _bit_test(ctx, base, offset, '%s(v ^ m)' % T(base.size * 8))
+
+
+def cg_xadd(ctx, dst, src):
+    bits = dst.size * 8
+    t = T(bits)
+    setup, cur, writer = ctx.bind(dst)
+    lines = setup + ['const %s a = %s;' % (t, cur), 'const %s b = %s;' % (t, ctx.val(src)),
+                     'const %s r = %s(a + b);' % (t, t)]
+    lines += ctx.set_flags({}, kind='add', bits=bits, operands={'a': 'a', 'b': 'b'})
+    return block(lines + ctx.put(src, 'a') + writer('r'))
+
+
 # ---- flag instructions ----------------------------------------------------------------------------------------
 
 def cg_clc(ctx):

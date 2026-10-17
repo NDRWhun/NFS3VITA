@@ -4,7 +4,8 @@ from . import control, fpu, integer, mmx, string
 from .ctx import CC_ALIASES
 
 _MODULES = (integer, control, string, fpu, mmx)
-_STRING = {'movs': string.cg_movs, 'stos': string.cg_stos, 'scas': string.cg_scas, 'cmps': string.cg_cmps}
+_STRING = {'movs': string.cg_movs, 'stos': string.cg_stos, 'scas': string.cg_scas, 'cmps': string.cg_cmps,
+           'lods': string.cg_lods}
 _PREFIXES = ('rep', 'repe', 'repz', 'repne', 'repnz')
 _unknown = set()
 
@@ -40,6 +41,9 @@ def generate(ctx, ins):
         prefix = 'repe'
     if prefix in ('repnz',):
         prefix = 'repne'
+    if prefix == 'lock':
+        # Guest code runs under one execution lock, so a locked instruction is atomic without the prefix.
+        prefix = None
 
     if mnemonic[:4] in _STRING and mnemonic not in ('movsx', 'movzx'):
         if prefix in ('repe', 'repne') and mnemonic[:4] in ('movs', 'stos'):

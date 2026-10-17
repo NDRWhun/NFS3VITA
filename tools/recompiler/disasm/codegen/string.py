@@ -56,6 +56,13 @@ def cg_stos(ctx, dst, value, prefix=None):
     return ['{'] + ['    ' + l for l in lines] + ['}']
 
 
+def cg_lods(ctx, value, src, prefix=None):
+    if prefix is not None:
+        raise AssertionError('rep lods')
+    load = ctx.load(src.size * 8, _segment(ctx, src) + 'si')
+    return _single(ctx, ['const x86::reg32 si = %s;' % ctx.reg('esi')] + ctx.put(value, load), src.size, ('esi',))
+
+
 def _compare(ctx, left, right, size, prefix, regs):
     """scas/cmps: left and right are (load expression builder over the temporaries)."""
     bits = size * 8

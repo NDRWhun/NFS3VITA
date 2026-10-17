@@ -17,7 +17,7 @@ from . import codegen, fpustack, stack
 
 
 FCOM = ('fcom', 'fcomp', 'fcompp', 'ftst')
-JCC = set('j' + cc for cc in C.CC_ALIASES) | {'jcxz', 'jecxz'}
+JCC = set('j' + cc for cc in C.CC_ALIASES) | {'jcxz', 'jecxz', 'loop', 'loope', 'loopne'}
 REG_SHIFT = 8
 ALL_REG_STATE = C.ALL_REGS << REG_SHIFT
 ALL_STATE = C.ALL_FLAGS | ALL_REG_STATE
@@ -422,6 +422,9 @@ class Function:
             i = work.pop()
             e = self.effects[i]
             dirty, clobbered = state_in[i]
+            if e.boundary == 'runtime':
+                # cpuid/rdtsc: their inputs are stored to cpu and their outputs written there.
+                clobbered |= e.reg_use | e.reg_def
             dirty |= e.reg_def | e.reg_partial
             for x in self.exits[i]:
                 stored = dirty & self.boundary_registers(i, x)

@@ -104,6 +104,16 @@ def _arith_pop(op, reverse=False):
     return pop
 
 
+def _arith_int(op, reverse=False):
+    """fiadd, fisub, ...: st0 op a 16- or 32-bit integer in memory."""
+    def integer(ctx, src):
+        value = 'x86::Float(%s(%s))' % (S(src.size * 8), ctx.val(src))
+        if reverse:
+            return ['%s = %s %s x86::Float(%s);' % (ctx.st(0), value, op, ctx.st(0))]
+        return ['%s %s= %s;' % (ctx.st(0), op, value)]
+    return integer
+
+
 cg_fadd = _arith('+')
 cg_fsub = _arith('-')
 cg_fsubr = _arith('-', reverse=True)
@@ -116,6 +126,12 @@ cg_fsubrp = _arith_pop('-', reverse=True)
 cg_fmulp = _arith_pop('*')
 cg_fdivp = _arith_pop('/')
 cg_fdivrp = _arith_pop('/', reverse=True)
+cg_fiadd = _arith_int('+')
+cg_fisub = _arith_int('-')
+cg_fisubr = _arith_int('-', reverse=True)
+cg_fimul = _arith_int('*')
+cg_fidiv = _arith_int('/')
+cg_fidivr = _arith_int('/', reverse=True)
 
 
 def cg_fxch(ctx, *args):

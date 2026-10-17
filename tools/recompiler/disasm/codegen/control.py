@@ -34,6 +34,24 @@ def cg_jecxz(ctx, *operands):
     return ['if (%s == 0)' % ctx.reg('ecx'), '{'] + ['    ' + l for l in _target(ctx, 'taken')] + ['}']
 
 
+def _loop(ctx, condition):
+    """loop/loope/loopne: ecx is decremented without changing flags."""
+    jump = ['if (%s != 0%s)' % (ctx.reg('ecx'), condition), '{'] + ['    ' + l for l in _target(ctx, 'taken')] + ['}']
+    return ctx.set_reg('ecx', '%s - 1' % ctx.reg('ecx')) + jump
+
+
+def cg_loop(ctx, *operands):
+    return _loop(ctx, '')
+
+
+def cg_loope(ctx, *operands):
+    return _loop(ctx, ' && %s' % ctx.flag('zf'))
+
+
+def cg_loopne(ctx, *operands):
+    return _loop(ctx, ' && !%s' % ctx.flag('zf'))
+
+
 def cg_call(ctx, destination):
     # The return address slot is not written: callees take their arguments relative to esp.
     if destination.type == X.X86_OP_IMM:

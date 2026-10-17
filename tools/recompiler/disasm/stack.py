@@ -60,9 +60,15 @@ def address_symbol(regs, ins, op):
     return 'stack'
 
 
+# x87 stores: capstone reports their memory operand as read only.
+X87_STORES = ('fst', 'fstp', 'fist', 'fistp', 'fisttp', 'fbstp', 'fnstsw', 'fstsw', 'fnstcw', 'fstcw', 'fnstenv',
+              'fstenv', 'fnsave', 'fsave')
+
+
 def written_memory(ins):
+    x87_store = ins.mnemonic.split()[-1] in X87_STORES
     for op in getattr(ins, 'operands', []):
-        if op.type == X.X86_OP_MEM and op.access & 2:
+        if op.type == X.X86_OP_MEM and (op.access & 2 or x87_store):
             yield op
 
 
