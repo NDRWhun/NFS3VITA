@@ -13,9 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     container: vitasdk/vitasdk:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Tools
-        run: apk add --no-cache cmake ninja
+        run: |
+          if ! command -v cmake >/dev/null || ! command -v ninja >/dev/null; then
+            apt-get update && apt-get install -y --no-install-recommends cmake ninja-build
+          fi
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja
@@ -28,8 +31,8 @@ jobs:
   recompiler:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Requirements
