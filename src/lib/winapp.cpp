@@ -72,7 +72,7 @@ WinApplication::WinApplication(const char* appName, x86::reg32 baseAddress, cons
     :   m_appName(nullptr)
     ,   m_appNameW(nullptr)
     ,   m_env(nullptr)
-    ,   m_executionContext(new Mutex("ExecutionContext"))
+    ,   m_executionContext(new Mutex("ExecutionContext", Mutex::Kernel))
     ,   m_preemptWaiters(0)
     ,   m_contextDepth(0)
     ,   m_resourceContext(new Mutex("Resource"))

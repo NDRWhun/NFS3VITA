@@ -11,7 +11,11 @@
 #include <fpu.h>
 #include <mmx.h>
 #include <nfs3hp.h>
+#include "fog.h"
 #include "gamespeed.h"
+#include "mastertimer.h"
+#include "menulists.h"
+#include "settings.h"
 #include "widescreen.h"
 #include <psp2/ctrl.h>
 #include <psp2/power.h>
@@ -138,6 +142,13 @@ int main(int, char**)
             pf::logInfo("widescreen: off");
         if (pf::perf::enabled())
             nfs3hp::gamespeed::install(app);
+        nfs3hp::fog::install(app);
+        nfs3hp::menulists::install(app);
+        nfs3hp::settings::install(app);
+        if (pf::Config::getBool("native_timer", true))
+            nfs3hp::mastertimer::install(app);
+        else
+            pf::logInfo("master timer: guest tick callback");
 #ifdef NFS3_PROFILE
         pf::prof::start(app);
 #endif

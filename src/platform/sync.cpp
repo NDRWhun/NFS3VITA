@@ -41,6 +41,46 @@ bool Mutex::tryLock()
     return sceKernelTryLockMutex(m_id, 1) == 0;
 }
 
+static SceKernelLwMutexWork* lwWork(int64_t* work)
+{
+    static_assert(sizeof(SceKernelLwMutexWork) == 4 * sizeof(int64_t), "LwMutex work area size");
+    return reinterpret_cast<SceKernelLwMutexWork*>(work);
+}
+
+LwMutex::LwMutex(const char* name, bool recursive)
+{
+    strncpy(m_name, name, sizeof(m_name) - 1);
+    m_name[sizeof(m_name) - 1] = 0;
+    const int result = sceKernelCreateLwMutex(lwWork(m_work), m_name, recursive ? SCE_KERNEL_MUTEX_ATTR_RECURSIVE : 0, 0,
+                                              nullptr);
+    if (result < 0)
+        fatal("sceKernelCreateLwMutex(%s) failed: 0x%08x", name, result);
+}
+
+LwMutex::~LwMutex()
+{
+    sceKernelDeleteLwMutex(lwWork(m_work));
+}
+
+void LwMutex::lock()
+{
+    const int result = sceKernelLockLwMutex(lwWork(m_work), 1, nullptr);
+    if (result < 0)
+        logError("sceKernelLockLwMutex(%s) failed: 0x%08x", m_name, result);
+}
+
+void LwMutex::unlock()
+{
+    const int result = sceKernelUnlockLwMutex(lwWork(m_work), 1);
+    if (result < 0)
+        logError("sceKernelUnlockLwMutex(%s) failed: 0x%08x", m_name, result);
+}
+
+bool LwMutex::tryLock()
+{
+    return sceKernelTryLockLwMutex(lwWork(m_work), 1) == 0;
+}
+
 CondVar::CondVar(const char* name, Mutex& mutex)
     :   m_id(sceKernelCreateCond(name, 0, mutex.handle(), nullptr))
 {
@@ -99,6 +139,19 @@ bool Semaphore::waitFor(uint32_t milliseconds)
     if (timeout == 0)
         timeout = 1;
     return sceKernelWaitSema(m_id, 1, &timeout) == 0;
+}
+
+bool Semaphore::waitForUs(uint32_t microseconds)
+{
+    if (microseconds == 0)
+        return tryWait();
+    SceUInt timeout = microseconds;
+    return sceKernelWaitSema(m_id, 1, &timeout) == 0;
+}
+
+bool Semaphore::tryWait()
+{
+    return sceKernelPollSema(m_id, 1) == 0;
 }
 
 void Semaphore::post(int count)

@@ -87,4 +87,9 @@ int Config::getInt(const char* key, int defaultValue)
     return value ? atoi(value) : defaultValue;
 }
 
+bool Config::has(const char* key)
+{
+    return find(key) != nullptr;
+}
+
 }

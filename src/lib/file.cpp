@@ -195,15 +195,42 @@ bool FileEnumerator::findNext(WIN32_FIND_DATAA *data)
     }
 }
 
+struct ReadFilterEntry
+{
+    std::string             suffix;
+    File::ReadFilter        filter;
+};
+
+// Written before guest code runs, read-only afterwards.
+static std::vector<ReadFilterEntry> s_readFilters;
+
+void File::setReadFilter(const char* pathSuffix, ReadFilter filter)
+{
+    s_readFilters.push_back(ReadFilterEntry{ pathSuffix, filter });
+}
+
+void File::initReadFilter()
+{
+    m_readFilter = nullptr;
+    for (const ReadFilterEntry& entry : s_readFilters)
+    {
+        if (m_filename.size() >= entry.suffix.size()
+            && m_filename.compare(m_filename.size() - entry.suffix.size(), entry.suffix.size(), entry.suffix) == 0)
+            m_readFilter = entry.filter;
+    }
+}
+
 File::File(int file, const char* name)
     :   m_file(dup(file))
     ,   m_filename(name)
 {
+    initReadFilter();
 }
 
 File::File(const File& other)
     :   m_file(open(other.m_filename.c_str(), O_RDONLY, 0664))
     ,   m_filename(other.m_filename)
+    ,   m_readFilter(other.m_readFilter)
 {
     pf::logDebug("opening file %s for Map", m_filename.c_str());
 }
@@ -213,6 +240,7 @@ File::File(const char* path, x86::reg32 mode, x86::reg32 flags, x86::reg32 creat
     ,   m_filename(normalizePath(moveToRoot(path)))
 {
     NFS2_USE(flags);
+    initReadFilter();
     int openFlags = 0;
     switch(mode)
     {
@@ -299,7 +327,10 @@ x86::reg32 File::seek(x86::reg32 mode, x86::sreg32 offset)
 
 x86::reg32 File::read(void* buffer, x86::reg32 max, x86::reg32* totalRead)
 {
+    const off_t offset = m_readFilter ? lseek(m_file, 0, SEEK_CUR) : 0;
     *totalRead = x86::reg32(::read(m_file, buffer, max));
+    if (m_readFilter && offset >= 0 && *totalRead != x86::reg32(-1))
+        m_readFilter(x86::reg32(offset), static_cast<x86::reg8*>(buffer), *totalRead);
     return *totalRead != x86::reg32(-1);
 }
 

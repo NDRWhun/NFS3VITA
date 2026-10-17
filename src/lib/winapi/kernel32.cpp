@@ -92,7 +92,9 @@ HANDLE CreateEventA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(cpu);
     NFS2_USE(lpEventAttributes);
     win32::Event* event = new win32::Event(lpName, bManualReset != 0, bInitialState != 0);
-    return app->allocateResource(event);
+    const HANDLE handle = app->allocateResource(event);
+    event->registerHandle(handle);
+    return handle;
 }
 
 HANDLE CreateFileA(WinApplication* app, x86::CPU& cpu,
@@ -138,12 +140,9 @@ HANDLE CreateMutexA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(cpu);
     NFS2_USE(lpMutexAttributes);
     win32::Mutex* mutex = new win32::Mutex(lpName);
+    // New, so this never blocks.
     if (bInitialOwner)
-    {
-        app->unlockContext(cpu);
         mutex->lock();
-        app->lockContext(cpu);
-    }
     return app->allocateResource(mutex);
 }
 
@@ -206,11 +205,13 @@ BOOL DuplicateHandle(WinApplication* app, x86::CPU& cpu,
 void EnterCriticalSection(WinApplication* app, x86::CPU& cpu,
                           LPCRITICAL_SECTION lpCriticalSection)
 {
-    NFS2_USE(app);
-    NFS2_USE(cpu);
-    app->unlockContext(cpu);
-    (*lpCriticalSection)->lock();
-    app->lockContext(cpu);
+    // Blocks only with the execution lock released: the owner may need that lock to leave the section.
+    if (!(*lpCriticalSection)->tryLock())
+    {
+        app->unlockContext(cpu);
+        (*lpCriticalSection)->lock();
+        app->lockContext(cpu);
+    }
 }
 
 BOOL EscapeCommFunction(WinApplication* app, x86::CPU& cpu,
@@ -836,9 +837,9 @@ void LeaveCriticalSection(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
+    // Keeps the execution lock: a thread that was waiting for the section takes the lock at its owner's next
+    // release or preemption point.
     (*lpCriticalSection)->unlock();
-    app->unlockContext(cpu);
-    app->lockContext(cpu);
 }
 
 HMODULE LoadLibraryA(WinApplication* app, x86::CPU& cpu,
@@ -1000,11 +1001,15 @@ BOOL RemoveDirectoryA(WinApplication* app, x86::CPU& cpu, LPCSTR lpPathName)
 
 BOOL ResetEvent(WinApplication* app, x86::CPU& cpu, HANDLE hEvent)
 {
-    NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(hEvent);
-    NFS2_ASSERT(false);
-    return 0;
+    Event* event = dynamic_cast<Event*>(app->getResource(hEvent));
+    if (!event)
+    {
+        NFS2_ASSERT(false);
+        return 0;
+    }
+    event->reset();
+    return 1;
 }
 
 DWORD ResumeThread(WinApplication* app, x86::CPU& cpu,
@@ -1123,18 +1128,13 @@ UINT SetErrorMode(WinApplication* app, x86::CPU& cpu, UINT uMode)
 BOOL SetEvent(WinApplication* app, x86::CPU& cpu,
               HANDLE hEvent)
 {
+    NFS2_USE(app);
     NFS2_USE(cpu);
-    win32::Event* event = dynamic_cast<win32::Event*>(app->getResource(hEvent));
-    if (event)
-    {
-        event->set();
+    if (win32::Event::setHandle(hEvent))
         return 1;
-    }
-    else
-    {
-        NFS2_ASSERT(false);
-        return 0;
-    }
+    // Windows fails the call for a closed handle; a thread may signal one its owner just closed.
+    pf::logError("SetEvent: no event with handle 0x%x", hEvent);
+    return 0;
 }
 
 BOOL SetFileAttributesA(WinApplication* app, x86::CPU& cpu,
@@ -1366,10 +1366,14 @@ DWORD WaitForSingleObject(WinApplication* app, x86::CPU& cpu,
                           HANDLE hHandle, DWORD dwMilliseconds)
 {
     NFS2_USE(cpu);
+    Event* event = dynamic_cast<win32::Event*>(app->getResource(hHandle));
+    if (!event)
+    {
+        NFS2_ASSERT(false);
+        return 0xffffffff;
+    }
     app->unlockContext(cpu);
-    GenericResource* r = app->getResource(hHandle);
-    Event* event = dynamic_cast<win32::Event*>(r);
-    DWORD result = DWORD(win32::Event::wait(cpu, &event, &event + 1, 0, x86::sreg32(dwMilliseconds)));
+    DWORD result = DWORD(win32::Event::wait(cpu, &event, &event + 1, false, x86::sreg32(dwMilliseconds)));
     app->lockContext(cpu);
     return result;
 }

@@ -26,13 +26,13 @@ Event     s_events[MaxEvents];
 int       s_count = 0;
 bool      s_running = false;
 uint64_t  s_startMs = 0;
-pf::Mutex s_mutex("nfs3_inputscript", false);
+pf::LwMutex s_mutex("nfs3_inputscript");
 
 }
 
 void InputScript::load(const char* path)
 {
-    pf::LockGuard guard(s_mutex);
+    pf::LwLockGuard guard(s_mutex);
     s_count = 0;
     s_running = false;
     FILE* file = fopen(path, "rt");
@@ -55,7 +55,7 @@ void InputScript::load(const char* path)
 
 void InputScript::resume()
 {
-    pf::LockGuard guard(s_mutex);
+    pf::LwLockGuard guard(s_mutex);
     if (s_count == 0 || s_running)
         return;
     s_running = true;
@@ -65,13 +65,13 @@ void InputScript::resume()
 
 void InputScript::pause()
 {
-    pf::LockGuard guard(s_mutex);
+    pf::LwLockGuard guard(s_mutex);
     s_running = false;
 }
 
 void InputScript::update()
 {
-    pf::LockGuard guard(s_mutex);
+    pf::LwLockGuard guard(s_mutex);
     const uint64_t ticks = pf::ticksMs();
     const uint32_t now = uint32_t(ticks - s_startMs);
     for (int i = 0; i < s_count; ++i)

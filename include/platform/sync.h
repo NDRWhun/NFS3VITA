@@ -25,16 +25,39 @@ private:
     char   m_name[32]; // kept for error messages
 };
 
-class LockGuard
+// Lightweight mutex: locking and unlocking without contention make no system call. Unlock passes it to the first
+// waiter (FIFO). The kernel keeps the object's address, so it must not move.
+class LwMutex
 {
 public:
-    explicit LockGuard(Mutex& mutex) : m_mutex(mutex) { m_mutex.lock(); }
-    ~LockGuard() { m_mutex.unlock(); }
+    explicit LwMutex(const char* name, bool recursive = false);
+    ~LwMutex();
+
+    void lock();
+    void unlock();
+    bool tryLock();
+
 private:
-    LockGuard(const LockGuard&) = delete;
-    LockGuard& operator=(const LockGuard&) = delete;
-    Mutex& m_mutex;
+    LwMutex(const LwMutex&) = delete;
+    LwMutex& operator=(const LwMutex&) = delete;
+    alignas(8) int64_t m_work[4];   // SceKernelLwMutexWork
+    char   m_name[32];              // kept for error messages
 };
+
+template< typename M >
+class BasicLockGuard
+{
+public:
+    explicit BasicLockGuard(M& mutex) : m_mutex(mutex) { m_mutex.lock(); }
+    ~BasicLockGuard() { m_mutex.unlock(); }
+private:
+    BasicLockGuard(const BasicLockGuard&) = delete;
+    BasicLockGuard& operator=(const BasicLockGuard&) = delete;
+    M& m_mutex;
+};
+
+typedef BasicLockGuard<Mutex>   LockGuard;
+typedef BasicLockGuard<LwMutex> LwLockGuard;
 
 // Bound to one mutex; wait() must be called with that mutex held.
 class CondVar
@@ -62,6 +85,8 @@ public:
 
     void wait();
     bool waitFor(uint32_t milliseconds); // false on timeout
+    bool waitForUs(uint32_t microseconds); // false on timeout; 0 only polls
+    bool tryWait();
     void post(int count = 1);
 
 private:

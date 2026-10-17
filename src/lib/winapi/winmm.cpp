@@ -45,30 +45,21 @@ MMRESULT timeGetDevCaps(WinApplication* app, x86::CPU& cpu,
 MMRESULT timeKillEvent(WinApplication* app, x86::CPU& cpu,
                        UINT uTimerID)
 {
+    NFS2_USE(app);
     NFS2_USE(cpu);
-    win32::Timer* timer = dynamic_cast<win32::Timer*>(app->getResource(uTimerID));
-    if (timer)
-    {
-        timer->cancel();
-        app->freeResource(uTimerID);
-    }
-    return 0;
+    // TIMERR_NOCANDO (TIMERR_BASE + 1) for an id that is not pending.
+    return win32::Timer::kill(uTimerID) ? 0 : 97;
 }
 
 MMRESULT timeSetEvent(WinApplication* app, x86::CPU& cpu,
                       UINT uDelay, UINT uResolution, LPTIMECALLBACK lpTimeProc,
                       x86::reg32 dwUser, UINT fuEvent)
 {
-    NFS2_USE(cpu);
     NFS2_ASSERT(fuEvent == 0);
     NFS2_USE(uResolution);
-    if (!cpu.terminate)
-    {
-        win32::Timer* timer = new win32::Timer(uDelay, app, lpTimeProc, dwUser);
-        return app->allocateResource(timer);
-    }
-    else
+    if (cpu.terminate)
         return 0;
+    return win32::Timer::set(app, uDelay, lpTimeProc, dwUser);
 }
 
 }}

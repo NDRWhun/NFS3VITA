@@ -3,11 +3,44 @@
 #include <platform/sync.h>
 #include <platform/time.h>
 #include <psp2/rtc.h>
-#include <algorithm>
 #include <vector>
 
 namespace win32
 {
+
+namespace
+{
+
+struct PendingTimer
+{
+    x86::reg32              id;
+    uint64_t                dueUs;
+    WinApplication*         app;
+    x86::reg32              callback;
+    x86::reg32              parameter;
+    Timer::NativeCallback   native;
+};
+
+struct NativeEntry
+{
+    x86::reg32              callback;
+    Timer::NativeCallback   native;
+};
+
+// Written before guest code runs, read-only afterwards.
+std::vector<NativeEntry> s_natives;
+
+Timer::NativeCallback findNative(x86::reg32 callback)
+{
+    for (const NativeEntry& entry : s_natives)
+    {
+        if (entry.callback == callback)
+            return entry.native;
+    }
+    return nullptr;
+}
+
+}
 
 // Single service thread firing pending timers in due order.
 class TimerService
@@ -17,6 +50,7 @@ public:
         :   m_mutex("nfs3_timers", false)
         ,   m_cond("nfs3_timers_cond", m_mutex)
         ,   m_running(true)
+        ,   m_lastId(0)
         ,   m_thread("nfs3_timer", &threadEntry, this, pf::Thread::PriorityNormal, 1024 * 1024, pf::Thread::CpuAll)
     {
         m_thread.start();
@@ -32,17 +66,29 @@ public:
         m_thread.join();
     }
 
-    void add(Timer* timer)
+    x86::reg32 add(const PendingTimer& timer)
     {
         pf::LockGuard guard(m_mutex);
+        if (++m_lastId == 0)
+            ++m_lastId;
         m_pending.push_back(timer);
+        m_pending.back().id = m_lastId;
         m_cond.signal();
+        return m_lastId;
     }
 
-    void remove(Timer* timer)
+    bool remove(x86::reg32 id)
     {
         pf::LockGuard guard(m_mutex);
-        m_pending.erase(std::remove(m_pending.begin(), m_pending.end(), timer), m_pending.end());
+        for (std::vector<PendingTimer>::iterator it = m_pending.begin(); it != m_pending.end(); ++it)
+        {
+            if (it->id == id)
+            {
+                m_pending.erase(it);
+                return true;
+            }
+        }
+        return false;
     }
 
 private:
@@ -62,44 +108,48 @@ private:
                 m_cond.wait();
                 continue;
             }
-            std::vector<Timer*>::iterator next = m_pending.begin();
-            for (std::vector<Timer*>::iterator it = m_pending.begin() + 1; it != m_pending.end(); ++it)
+            std::vector<PendingTimer>::iterator next = m_pending.begin();
+            for (std::vector<PendingTimer>::iterator it = m_pending.begin() + 1; it != m_pending.end(); ++it)
             {
-                if ((*it)->m_dueUs < (*next)->m_dueUs)
+                if (it->dueUs < next->dueUs)
                     next = it;
             }
-            uint64_t now = pf::ticksUs();
-            if ((*next)->m_dueUs > now)
+            const uint64_t now = pf::ticksUs();
+            if (next->dueUs > now)
             {
-                uint64_t waitMs = ((*next)->m_dueUs - now + 999) / 1000;
+                const uint64_t waitMs = (next->dueUs - now + 999) / 1000;
                 m_cond.waitFor(uint32_t(waitMs));
                 continue;
             }
-            // Copy what the callback needs; the Timer may be freed while it runs.
-            WinApplication* app = (*next)->m_app;
-            x86::reg32 callback = (*next)->m_callback;
-            x86::reg32 parameter = (*next)->m_parameter;
+            // The id is invalid from here on: timeKillEvent of a firing timer finds nothing.
+            const PendingTimer timer = *next;
             m_pending.erase(next);
             m_mutex.unlock();
-            fire(app, callback, parameter);
+            fire(timer);
             m_mutex.lock();
         }
         m_mutex.unlock();
     }
 
-    static void fire(WinApplication* app, x86::reg32 callback, x86::reg32 parameter)
+    static void fire(const PendingTimer& timer)
     {
+        if (timer.native)
+        {
+            timer.native(timer.app);
+            return;
+        }
         // winmm runs timer callbacks on a time-critical thread: they preempt the game thread.
         alignas(16) x86::CPU cpu{};
-        app->runThread(cpu, callback, parameter, true, true);
+        timer.app->runThread(cpu, timer.callback, timer.parameter, true, true);
     }
 
 private:
-    pf::Mutex           m_mutex;
-    pf::CondVar         m_cond;
-    bool                m_running;
-    std::vector<Timer*> m_pending;
-    pf::Thread          m_thread;
+    pf::Mutex                   m_mutex;
+    pf::CondVar                 m_cond;
+    bool                        m_running;
+    x86::reg32                  m_lastId;
+    std::vector<PendingTimer>   m_pending;
+    pf::Thread                  m_thread;
 };
 
 static TimerService* s_service = nullptr;
@@ -135,24 +185,23 @@ void Timer::fini()
     s_service = nullptr;
 }
 
-Timer::Timer(x86::reg32 delay, WinApplication* app, x86::reg32 proc, x86::reg32 param)
-    :   m_app(app)
-    ,   m_callback(proc)
-    ,   m_parameter(param)
-    ,   m_dueUs(pf::ticksUs() + uint64_t(delay) * 1000)
+x86::reg32 Timer::set(WinApplication* app, x86::reg32 delayMs, x86::reg32 callback, x86::reg32 parameter)
 {
-    s_service->add(this);
+    if (!s_service)
+        return 0;
+    const PendingTimer timer = { 0, pf::ticksUs() + uint64_t(delayMs) * 1000, app, callback, parameter,
+                                 findNative(callback) };
+    return s_service->add(timer);
 }
 
-Timer::~Timer()
+bool Timer::kill(x86::reg32 id)
 {
-    cancel();
+    return s_service && s_service->remove(id);
 }
 
-void Timer::cancel()
+void Timer::setNativeCallback(x86::reg32 callback, NativeCallback native)
 {
-    if (s_service)
-        s_service->remove(this);
+    s_natives.push_back(NativeEntry{ callback, native });
 }
 
 }

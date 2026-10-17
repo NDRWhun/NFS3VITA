@@ -26,11 +26,33 @@ enum MessageType
 };
 
 static const x86::reg32 s_inputPollMs = 16;
+static const x86::reg32 s_idleWaitMs = 100;     // threads not polling still check their terminate flag
 
 static pf::MessageQueue s_queue;
 static WindowClass* s_class;
 static std::atomic<x86::reg32> s_inputPosted{0};  // MSG_KEY / MSG_CHAR pushed
 static std::atomic<x86::reg32> s_inputTaken{0};   // MSG_KEY / MSG_CHAR returned by getMessage
+static std::atomic<bool>       s_polling{false};  // a thread in getMessage polls the pad
+
+// Holds the pad polling role while a thread waits in getMessage; one poller is enough.
+class PollRole
+{
+public:
+    PollRole() : m_owned(false) {}
+    ~PollRole()
+    {
+        if (m_owned)
+            s_polling.store(false);
+    }
+    bool acquire()
+    {
+        if (!m_owned)
+            m_owned = !s_polling.exchange(true);
+        return m_owned;
+    }
+private:
+    bool m_owned;
+};
 
 static void pushInput(const pf::Message& message)
 {
@@ -66,13 +88,16 @@ x86::reg32 Window::getMessage(const x86::CPU& cpu, MSG* result, Window *window, 
     NFS2_USE(msgMax);
     memset(result, 0, sizeof(MSG));
     pf::Message message;
+    PollRole role;
     for (;;)
     {
-        if (!s_queue.wait(message, s_inputPollMs))
+        const bool poller = role.acquire();
+        if (!s_queue.wait(message, poller ? s_inputPollMs : s_idleWaitMs))
         {
             if (cpu.terminate)
                 return 0;
-            Gamepad::updateKeys();
+            if (poller)
+                Gamepad::updateKeys();
             continue;
         }
         if (cpu.terminate)

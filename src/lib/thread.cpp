@@ -21,11 +21,11 @@ struct ThreadIdEntry
 static const int    s_maxThreadIds = 64;
 static ThreadIdEntry s_threadIds[s_maxThreadIds];
 static int          s_threadIdCount = 0;
-static pf::Mutex    s_threadIdMutex("nfs3_thread_ids", false);
+static pf::LwMutex  s_threadIdMutex("nfs3_thread_ids");
 
 static void registerCurrentThread(x86::reg32 guestId)
 {
-    pf::LockGuard guard(s_threadIdMutex);
+    pf::LwLockGuard guard(s_threadIdMutex);
     if (s_threadIdCount < s_maxThreadIds)
     {
         s_threadIds[s_threadIdCount].hostId = pf::Thread::currentId();
@@ -40,7 +40,7 @@ static void registerCurrentThread(x86::reg32 guestId)
 
 static void unregisterCurrentThread()
 {
-    pf::LockGuard guard(s_threadIdMutex);
+    pf::LwLockGuard guard(s_threadIdMutex);
     int hostId = pf::Thread::currentId();
     for (int i = 0; i < s_threadIdCount; ++i)
     {
@@ -113,7 +113,7 @@ void Thread::setPriority(int priority)
 
 x86::reg32 Thread::currentThreadId()
 {
-    pf::LockGuard guard(s_threadIdMutex);
+    pf::LwLockGuard guard(s_threadIdMutex);
     int hostId = pf::Thread::currentId();
     for (int i = 0; i < s_threadIdCount; ++i)
     {

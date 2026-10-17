@@ -67,7 +67,11 @@ set(NFS3_WINAPI_SOURCES
 
 # Port code that works with nfs3.exe guest addresses.
 set(NFS3_GAME_PORT_SOURCES
+  src/nfs3hp/fog.cpp
   src/nfs3hp/gamespeed.cpp
+  src/nfs3hp/mastertimer.cpp
+  src/nfs3hp/menulists.cpp
+  src/nfs3hp/settings.cpp
   src/nfs3hp/widescreen.cpp
 )
 

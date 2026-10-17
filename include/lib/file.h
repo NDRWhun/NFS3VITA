@@ -65,6 +65,9 @@ private:
 class File : public GenericResource
 {
 public:
+    // Edits data just read: offset is the data's position in the file. Any thread.
+    typedef void (*ReadFilter)(x86::reg32 offset, x86::reg8* data, x86::reg32 length);
+
     File(int file, const char* name);
     File(const File& other);
     File(const char* path, x86::reg32 mode, x86::reg32 flags, x86::reg32 creationFlags);
@@ -81,11 +84,17 @@ public:
     static void setDataDirectory(const char* path);
     static void setCdDirectory(const char* path);
     static x86::reg32 remove(const char* filename);
+    // Applies the filter to reads of files opened later whose host path ends with the suffix (lower case).
+    // Before guest code runs.
+    static void setReadFilter(const char* pathSuffix, ReadFilter filter);
 
     operator void*() { return reinterpret_cast<void*>(static_cast<intptr_t>(m_file)+1); }
 private:
+    void initReadFilter();
+
     int m_file;
     std::string m_filename;
+    ReadFilter m_readFilter;
 };
 
 }

@@ -11,6 +11,7 @@ public:
     static void load(const char* path);
     static bool getBool(const char* key, bool defaultValue);
     static int  getInt(const char* key, int defaultValue);
+    static bool has(const char* key);
 };
 
 }

@@ -323,15 +323,14 @@ HRESULT IDirectInputDevice::Unacquire(WinApplication* app, x86::CPU& cpu)
 HRESULT IDirectInputDevice::GetDeviceState(WinApplication* app, x86::CPU& cpu,
                                            DWORD cbData, LPVOID lpvData)
 {
+    NFS2_USE(app);
+    NFS2_USE(cpu);
     Gamepad* gamepad = dynamic_cast<Gamepad*>(m_resource);
     GamepadState pad;
     memset(&pad, 0, sizeof(pad));
+    // A pad read without waiting: the execution lock stays held.
     if (gamepad)
-    {
-        app->unlockContext(cpu);
         pad = gamepad->getState();
-        app->lockContext(cpu);
-    }
     memset(lpvData, 0, cbData);
     if (gamepad)
     {
@@ -543,9 +542,8 @@ HRESULT IDirectInputDevice::Poll(WinApplication* app, x86::CPU& cpu)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    app->unlockContext(cpu);
+    // Short host lock that is never held while waiting for the execution lock.
     Gamepad::poll();
-    app->lockContext(cpu);
     return 0;
 }
 

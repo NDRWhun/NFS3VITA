@@ -14,7 +14,7 @@ namespace win32
 static const uint64_t s_raceModeUs = 250000;
 
 // updateKeys() runs on the message thread and the game thread; s_keysMutex guards everything below.
-static pf::Mutex       s_keysMutex("nfs3_pad_keys", false);
+static pf::LwMutex     s_keysMutex("nfs3_pad_keys");
 static bool            s_polled;            // DirectInput Poll seen at s_pollUs
 static uint64_t        s_pollUs;
 static controls::Mode  s_mode = controls::MenuMode;
@@ -58,7 +58,7 @@ static bool raceMode()
 
 void Input::poll()
 {
-    pf::LockGuard lock(s_keysMutex);
+    pf::LwLockGuard lock(s_keysMutex);
     s_polled = true;
     s_pollUs = pf::ticksUs();
 }
@@ -72,7 +72,7 @@ void Gamepad::pushNamedKey(const char* name, bool down)
 
 void Gamepad::updateKeys()
 {
-    pf::LockGuard lock(s_keysMutex);
+    pf::LwLockGuard lock(s_keysMutex);
     InputScript::update();
     const controls::PadState pad = controls::readPad();
     const bool textFieldOwned = TextField::ownsPad();
