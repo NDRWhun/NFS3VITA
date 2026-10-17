@@ -38,8 +38,8 @@ tools/stage-data.ps1 -Game <game> -ModernPatch <patch> -Out vita-data
 ```
 
 Install `build-release/NFS3VITA.vpk` with VitaShell and copy the contents of `vita-data` to `ux0:data/nfs3vita/`.
-Races start at 960x544 on the first run. The 640x480 frontend menus are stretched to the full screen;
-`stretch=0` in `ux0:data/nfs3vita/nfs3vita.cfg` shows them in 4:3 with side bars, and `resolution=WIDTHxHEIGHT`
+Races start at 960x544 on the first run. The 640x480 frontend menus and the loading screens are stretched to the
+full screen; `stretch=0` in `ux0:data/nfs3vita/nfs3vita.cfg` shows them in 4:3 with side bars, and `resolution=WIDTHxHEIGHT`
 picks another race resolution (for example `1024x768`, shown in 4:3).
 
 ## Building

@@ -148,7 +148,8 @@ NOT_CODE = [0x47bbb8]
 # sub_<address>_guest for NFS3_NATIVE_VERIFY builds.
 NATIVE_OVERRIDES = [0x4ea4f0, 0x5033e4, 0x5033e5, 0x4e070c, 0x4e0716, 0x4e0721,
                     0x4bf4c0, 0x4e03b0, 0x4e0430, 0x4e0210, 0x4e0280,
-                    0x4c12e0, 0x4c2cd0]
+                    0x4c12e0, 0x4c2cd0,
+                    0x4beb20]     # view rect read: the Modern Patch loading screen (src/nfs3hp/loadingscreen.cpp)
 
 THREAD_ROUTINES = []
 

@@ -15,6 +15,7 @@
 #include <winapi/kernel32.h>
 #include "fog.h"
 #include "gamespeed.h"
+#include "loadingscreen.h"
 #include "mastertimer.h"
 #include "menulists.h"
 #include "settings.h"
@@ -148,7 +149,9 @@ int main(int, char**)
     pf::gxm::Device::get().setFramebuffer16Bgr(pf::Config::getBool("vita3k_bgr565", false));
     // The Modern Patch races at 960x544, so only its 640x480 frontend is stretched; the original exe's race HUD is
     // 4:3 and would be stretched too, so it stays pillarboxed unless asked for.
-    pf::gxm::Device::get().setStretch(pf::Config::getBool("stretch", modernPatch));
+    const bool stretch = pf::Config::getBool("stretch", modernPatch);
+    pf::gxm::Device::get().setStretch(stretch);
+    nfs3hp::loadingscreen::setStretch(modernPatch && stretch);
     if (!pf::gxm::Device::get().init())
         pf::fatal("graphics initialisation failed");
 
