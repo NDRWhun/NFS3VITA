@@ -1,5 +1,4 @@
 #include <lib/gamepad.h>
-#include <lib/inputscript.h>
 #include <lib/textfield.h>
 #include <lib/window.h>
 #include <platform/sync.h>
@@ -73,7 +72,6 @@ void Gamepad::pushNamedKey(const char* name, bool down)
 void Gamepad::updateKeys()
 {
     pf::LwLockGuard lock(s_keysMutex);
-    InputScript::update();
     const controls::PadState pad = controls::readPad();
     const bool textFieldOwned = TextField::ownsPad();
     if (textFieldOwned && !s_textFieldOwned)

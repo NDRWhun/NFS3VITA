@@ -2,7 +2,6 @@
 # Machine-specific settings come from the environment or from tools\env.local.ps1 (ignored by git):
 #   $env:VITASDK          = '<VitaSDK root>'                    required
 #   $env:SCE_PSP2_SDK_DIR = '<official PSP2 SDK root>'          optional: recompiles shaders with psp2cgc
-#   $env:VITA3K_EXE       = '<path to the Vita3K executable>'   optional: tools\run-vita3k.ps1
 
 $local = Join-Path $PSScriptRoot 'env.local.ps1'
 if (Test-Path $local) { . $local }

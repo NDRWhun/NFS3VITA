@@ -24,9 +24,6 @@ set(VITA_VERSION  "01.00")
 
 option(NFS3_LOG_DEBUG        "Verbose runtime logging" OFF)
 option(NFS3_ASSERT_SOFT      "Log failed assertions instead of trapping" OFF)
-option(NFS3_DEBUG_INSTALLWIN "Log the parsed install.win table at video mode set" OFF)
-option(NFS3_DEBUG_FRAMEDUMP  "Write presented 16-bit frames as raw 565 files to ux0:data/nfs3vita/dump" OFF)
-option(NFS3_PROFILE          "Sampling profiler build: instrumented copies of the generated code" OFF)
 option(NFS3_RUNTIME_CHECK    "Only compile the runtime sources that build without the generated code (CI)" OFF)
 
 include(cmake/nfs3_shaders.cmake)
@@ -54,13 +51,6 @@ if(NFS3_LOG_DEBUG)
 endif()
 if(NFS3_ASSERT_SOFT)
   list(APPEND NFS3_RUNTIME_DEFINES NFS3_ASSERT_SOFT)
-endif()
-if(NFS3_DEBUG_INSTALLWIN)
-  list(APPEND NFS3_RUNTIME_DEFINES NFS3_DEBUG_INSTALLWIN)
-endif()
-if(NFS3_DEBUG_FRAMEDUMP)
-  set(NFS3_DEBUG_FRAMEDUMP_SKIP 0 CACHE STRING "Presents to skip before dumping frames")
-  list(APPEND NFS3_RUNTIME_DEFINES NFS3_DEBUG_FRAMEDUMP NFS3_DEBUG_FRAMEDUMP_SKIP=${NFS3_DEBUG_FRAMEDUMP_SKIP})
 endif()
 
 set(NFS3_GENERATED_DIR "${CMAKE_SOURCE_DIR}/src/nfs3hp/disassembly" CACHE PATH "Generated game code (tools/generate.ps1)")
@@ -131,7 +121,3 @@ vita_create_vpk(NFS3VITA.vpk ${VITA_TITLEID} NFS3VITA.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}
 )
-
-if(NFS3_PROFILE)
-  include(cmake/nfs3_profile.cmake)
-endif()

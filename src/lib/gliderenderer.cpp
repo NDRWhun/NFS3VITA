@@ -1,6 +1,5 @@
 #include <lib/gliderenderer.h>
 #include <lib/renderer.h>
-#include <lib/inputscript.h>
 #include <platform/gxm.h>
 #include <platform/log.h>
 #include <cstddef>
@@ -77,7 +76,6 @@ pf::gxm::Frame& GlideRenderer::beginFrame()
         current = &device.acquireFrame();
     if (current->kind != pf::gxm::FrameGlide)
     {
-        InputScript::resume();
         current->kind = pf::gxm::FrameGlide;
         current->vblanks = 1;
         current->sourceWidth = m_renderer->m_width;

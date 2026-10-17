@@ -21,7 +21,6 @@ set(NFS3_LIB_SOURCES
   src/lib/file.cpp
   src/lib/gamepad.cpp
   src/lib/gliderenderer.cpp
-  src/lib/inputscript.cpp
   src/lib/library.cpp
   src/lib/mutex.cpp
   src/lib/palette.cpp

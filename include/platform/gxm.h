@@ -122,8 +122,6 @@ public:
 
     // Glide frames fill the display whatever their aspect; framebuffer frames (movies) keep theirs. Before init.
     void setStretch(bool stretch);
-    // Vita3K reads the 565 swizzle the other way round; hardware wants RGB.
-    void setFramebuffer16Bgr(bool bgr);
     // The 4:3 game area centred on the display.
     Rect viewport() const;
 

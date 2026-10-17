@@ -1,13 +1,9 @@
 #include <lib/file.h>
-#include <lib/inputscript.h>
 #include <lib/registry.h>
 #include <platform/config.h>
 #include <platform/gxm.h>
 #include <platform/log.h>
 #include <platform/perf.h>
-#ifdef NFS3_PROFILE
-#include <platform/prof.h>
-#endif
 #include <fpu.h>
 #include <mmx.h>
 #include <nfs3hp.h>
@@ -134,7 +130,6 @@ int main(int, char**)
     x86::fpuSelfTest();
     pf::Config::load("ux0:data/nfs3vita/nfs3vita.cfg");
     pf::perf::init(pf::Config::getBool("perf_log", false));
-    win32::InputScript::load("ux0:data/nfs3vita/autoinput.txt");
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
     // The Modern Patch reads nfs3.ini and drivers\<ThrashDriver>\thrash.ini (installed with its files) instead of
@@ -146,7 +141,6 @@ int main(int, char**)
         ensureInstallWin();
         ensureCdMarker();
     }
-    pf::gxm::Device::get().setFramebuffer16Bgr(pf::Config::getBool("vita3k_bgr565", false));
     // The Modern Patch races at 960x544, so only its 640x480 frontend is stretched; the original exe's race HUD is
     // 4:3 and would be stretched too, so it stays pillarboxed unless asked for.
     const bool stretch = pf::Config::getBool("stretch", modernPatch);
@@ -183,13 +177,7 @@ int main(int, char**)
             nfs3hp::mastertimer::install(app);
         else
             pf::logInfo("master timer: guest tick callback");
-#ifdef NFS3_PROFILE
-        pf::prof::start(app);
-#endif
         app.execute();
-#ifdef NFS3_PROFILE
-        pf::prof::stop();
-#endif
     }
     pf::logInfo("NFS3VITA exiting");
     pf::gxm::Device::get().shutdown();

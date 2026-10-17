@@ -37,7 +37,6 @@ const uint32_t DialogRefreshMs      = 50;   // longest wait for a game frame whi
 const uint32_t GpuDoneGapUs         = 1000; // display callback started this long after the previous one returned
 const SceUID   InvalidUid           = -1;
 
-static bool s_framebufferBgr = false; // 565 texture swizzle for Vita3K, see Device::setFramebuffer16Bgr
 static bool s_stretch = false;        // Glide frames fill the display, see Device::setStretch
 
 struct DisplayData
@@ -189,7 +188,7 @@ SceGxmTextureFormat gxmTextureFormat(TextureFormat format)
     switch (format)
     {
     case TextureRgb565:
-        return s_framebufferBgr ? SCE_GXM_TEXTURE_FORMAT_U5U6U5_BGR : SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB;
+        return SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB;
     case TextureArgb1555:
         return SCE_GXM_TEXTURE_FORMAT_U1U5U5U5_ARGB;
     case TextureArgb4444:
@@ -827,7 +826,7 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
         SceGxmTexture texture;
         SceGxmTextureFormat format = SCE_GXM_TEXTURE_FORMAT_P8_ABGR;
         if (frame.kind == FrameFramebuffer16)
-            format = s_framebufferBgr ? SCE_GXM_TEXTURE_FORMAT_U5U6U5_BGR : SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB;
+            format = SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB;
         sceGxmTextureInitLinear(&texture, frame.framebuffer, format, frame.sourceWidth, frame.sourceHeight, 1);
         if (frame.kind == FrameFramebuffer8)
             sceGxmTextureSetPalette(&texture, frame.palette);
@@ -1154,11 +1153,6 @@ uint32_t Device::submittedFrameCount() const
 void Device::setStretch(bool stretch)
 {
     s_stretch = stretch;
-}
-
-void Device::setFramebuffer16Bgr(bool bgr)
-{
-    s_framebufferBgr = bgr;
 }
 
 uint32_t Device::Impl::recordingFrameIndex() const
