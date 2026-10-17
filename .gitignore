@@ -8,7 +8,7 @@
 !/shaders/gxp/*.gxp
 param.sfo
 
-# Generated code imported from the upstream recompilation (tools/import-upstream.ps1)
+# Generated recompilation (tools/generate.ps1)
 /src/nfs3hp/disassembly/
 
 # Original game binaries and data are never tracked
