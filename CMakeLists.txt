@@ -20,7 +20,7 @@ include("${VITASDK}/share/vita.cmake" REQUIRED)
 
 set(VITA_APP_NAME "NFS3VITA")
 set(VITA_TITLEID  "NFS3VITA1")
-set(VITA_VERSION  "00.01")
+set(VITA_VERSION  "01.00")
 
 option(NFS3_LOG_DEBUG        "Verbose runtime logging" OFF)
 option(NFS3_ASSERT_SOFT      "Log failed assertions instead of trapping" OFF)
