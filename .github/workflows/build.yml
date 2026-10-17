@@ -1,0 +1,41 @@
+# The game code is generated from the user's own game binaries, which CI does not have. CI compiles the runtime
+# sources that build without it (NFS3_RUNTIME_CHECK) and checks the recompiler's Python sources.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    container: vitasdk/vitasdk:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: apk add --no-cache cmake ninja
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake"
+          -DCMAKE_BUILD_TYPE=Release
+          -DNFS3_RUNTIME_CHECK=ON
+      - name: Build
+        run: cmake --build build --parallel
+
+  recompiler:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Requirements
+        run: pip install -r tools/recompiler/requirements.txt
+      - name: Compile
+        run: python -m compileall -q tools/recompiler
+      - name: Import
+        working-directory: tools/recompiler
+        run: python -c "import generate"

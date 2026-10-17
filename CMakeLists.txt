@@ -27,6 +27,7 @@ option(NFS3_ASSERT_SOFT      "Log failed assertions instead of trapping" OFF)
 option(NFS3_DEBUG_INSTALLWIN "Log the parsed install.win table at video mode set" OFF)
 option(NFS3_DEBUG_FRAMEDUMP  "Write presented 16-bit frames as raw 565 files to ux0:data/nfs3vita/dump" OFF)
 option(NFS3_PROFILE          "Sampling profiler build: instrumented copies of the generated code" OFF)
+option(NFS3_RUNTIME_CHECK    "Only compile the runtime sources that build without the generated code (CI)" OFF)
 
 include(cmake/nfs3_shaders.cmake)
 include(cmake/nfs3_sources.cmake)
@@ -38,12 +39,6 @@ nfs3_add_shader(NFS3_SHADER_SOURCES blit_v  sce_vp_psp2)
 nfs3_add_shader(NFS3_SHADER_SOURCES blit_f  sce_fp_psp2)
 nfs3_add_shader(NFS3_SHADER_SOURCES clear_v sce_vp_psp2)
 nfs3_add_shader(NFS3_SHADER_SOURCES clear_f sce_fp_psp2)
-
-set(NFS3_GENERATED_DIR "${CMAKE_SOURCE_DIR}/src/nfs3hp/disassembly" CACHE PATH "Generated game code (tools/generate.ps1)")
-file(GLOB NFS3_DISASM_SOURCES CONFIGURE_DEPENDS "${NFS3_GENERATED_DIR}/*.cpp")
-if(NOT NFS3_DISASM_SOURCES)
-  message(FATAL_ERROR "${NFS3_GENERATED_DIR} is empty; run tools/generate.ps1 first.")
-endif()
 
 set(NFS3_COMMON_FLAGS
   -march=armv7-a -mtune=cortex-a9 -mfpu=neon -mfloat-abi=hard
@@ -68,11 +63,26 @@ if(NFS3_DEBUG_FRAMEDUMP)
   list(APPEND NFS3_RUNTIME_DEFINES NFS3_DEBUG_FRAMEDUMP NFS3_DEBUG_FRAMEDUMP_SKIP=${NFS3_DEBUG_FRAMEDUMP_SKIP})
 endif()
 
+set(NFS3_GENERATED_DIR "${CMAKE_SOURCE_DIR}/src/nfs3hp/disassembly" CACHE PATH "Generated game code (tools/generate.ps1)")
 set(NFS3_INCLUDES
   ${CMAKE_SOURCE_DIR}/include
   ${CMAKE_SOURCE_DIR}/src/nfs3hp
   ${NFS3_GENERATED_DIR}
 )
+
+# Compiles the runtime sources that do not need the generated game code; no VPK (CI without game binaries).
+if(NFS3_RUNTIME_CHECK)
+  add_library(nfs3_runtime_check OBJECT ${NFS3_STANDALONE_SOURCES} ${NFS3_SHADER_SOURCES})
+  target_compile_options(nfs3_runtime_check PRIVATE ${NFS3_COMMON_FLAGS} -O3 -Werror)
+  target_compile_definitions(nfs3_runtime_check PRIVATE ${NFS3_RUNTIME_DEFINES})
+  target_include_directories(nfs3_runtime_check PRIVATE ${NFS3_INCLUDES})
+  return()
+endif()
+
+file(GLOB NFS3_DISASM_SOURCES CONFIGURE_DEPENDS "${NFS3_GENERATED_DIR}/*.cpp")
+if(NOT NFS3_DISASM_SOURCES)
+  message(FATAL_ERROR "${NFS3_GENERATED_DIR} is empty; run tools/generate.ps1 first.")
+endif()
 
 # Generated game code: large, optimise for size and compile time.
 add_library(nfs3_game OBJECT ${NFS3_DISASM_SOURCES})

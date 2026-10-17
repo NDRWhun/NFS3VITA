@@ -23,7 +23,6 @@ set(NFS3_LIB_SOURCES
   src/lib/gliderenderer.cpp
   src/lib/inputscript.cpp
   src/lib/library.cpp
-  src/lib/memmap.cpp
   src/lib/mutex.cpp
   src/lib/palette.cpp
   src/lib/process.cpp
@@ -66,7 +65,6 @@ set(NFS3_WINAPI_SOURCES
 
 # Port code that works with nfs3.exe guest addresses.
 set(NFS3_GAME_PORT_SOURCES
-  src/nfs3hp/fog.cpp
   src/nfs3hp/gamespeed.cpp
   src/nfs3hp/loadingscreen.cpp
   src/nfs3hp/mastertimer.cpp
@@ -75,14 +73,26 @@ set(NFS3_GAME_PORT_SOURCES
   src/nfs3hp/native/memory.cpp
   src/nfs3hp/native/transform.cpp
   src/nfs3hp/settings.cpp
+)
+
+# Runtime sources that include headers generated from the game binaries (nfs3hp_layout.h, voodoo2a.h).
+set(NFS3_GENERATED_HEADER_SOURCES
+  src/lib/memmap.cpp
+  src/nfs3hp/fog.cpp
   src/nfs3hp/thrashdraw.cpp
   src/nfs3hp/videomodes.cpp
   src/nfs3hp/widescreen.cpp
 )
 
-set(NFS3_RUNTIME_SOURCES
+# Runtime sources that build without the generated code (the CI runtime check).
+set(NFS3_STANDALONE_SOURCES
   ${NFS3_PLATFORM_SOURCES}
   ${NFS3_LIB_SOURCES}
   ${NFS3_WINAPI_SOURCES}
   ${NFS3_GAME_PORT_SOURCES}
+)
+
+set(NFS3_RUNTIME_SOURCES
+  ${NFS3_STANDALONE_SOURCES}
+  ${NFS3_GENERATED_HEADER_SOURCES}
 )

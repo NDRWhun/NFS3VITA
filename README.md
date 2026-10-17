@@ -25,7 +25,7 @@
   <a href="../../issues">Report Bug</a>
 </p>
 
-[![version][version-shield]][version-url]&nbsp;[![release][release-shield]][release-url]&nbsp;[![downloads][downloads-shield]][downloads-url]&nbsp;[![issues][issues-shield]][issues-url]&nbsp;[![last commit][commit-shield]][commit-url]
+[![build][build-shield]][build-url]&nbsp;[![version][version-shield]][version-url]&nbsp;[![release][release-shield]][release-url]&nbsp;[![downloads][downloads-shield]][downloads-url]&nbsp;[![issues][issues-shield]][issues-url]&nbsp;[![last commit][commit-shield]][commit-url]
 
 [![platform][platform-shield]][platform-url]&nbsp;[![renderer][renderer-shield]][renderer-url]&nbsp;[![resolution][resolution-shield]][resolution-url]&nbsp;[![base][base-shield]][base-url]&nbsp;[![patch][patch-shield]][patch-url]&nbsp;[![license][license-shield]][license-url]
 
@@ -188,6 +188,8 @@ trademark of Electronic Arts; you must own a legal copy to play.
 
 <!-- BADGES -->
 
+[build-shield]: https://img.shields.io/github/actions/workflow/status/NDRWhun/NFS3VITA/build.yml?branch=main&label=build&style=flat-square
+[build-url]: ../../actions/workflows/build.yml
 [version-shield]: https://img.shields.io/badge/version-1.0-e8283a?style=flat-square
 [version-url]: ../../releases
 [release-shield]: https://img.shields.io/github/v/release/NDRWhun/NFS3VITA?include_prereleases&sort=semver&label=release&style=flat-square
