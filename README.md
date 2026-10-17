@@ -25,9 +25,9 @@
   <a href="../../issues">Report Bug</a>
 </p>
 
-[![build][build-shield]][build-url]&nbsp;[![version][version-shield]][version-url]&nbsp;[![release][release-shield]][release-url]&nbsp;[![downloads][downloads-shield]][downloads-url]&nbsp;[![issues][issues-shield]][issues-url]&nbsp;[![last commit][commit-shield]][commit-url]
+[![build][build-shield]][build-url]&nbsp;[![release][release-shield]][release-url]&nbsp;[![downloads][downloads-shield]][downloads-url]&nbsp;[![issues][issues-shield]][issues-url]&nbsp;[![last commit][commit-shield]][commit-url]
 
-[![platform][platform-shield]][platform-url]&nbsp;[![renderer][renderer-shield]][renderer-url]&nbsp;[![resolution][resolution-shield]][resolution-url]&nbsp;[![base][base-shield]][base-url]&nbsp;[![patch][patch-shield]][patch-url]&nbsp;[![license][license-shield]][license-url]
+[![platform][platform-shield]][platform-url]&nbsp;[![resolution][resolution-shield]][resolution-url]&nbsp;[![renderer][renderer-shield]][renderer-url]&nbsp;[![patch][patch-shield]][patch-url]&nbsp;[![base][base-shield]][base-url]&nbsp;[![license][license-shield]][license-url]
 
 </div>
 
@@ -188,27 +188,25 @@ trademark of Electronic Arts; you must own a legal copy to play.
 
 <!-- BADGES -->
 
-[build-shield]: https://img.shields.io/github/actions/workflow/status/NDRWhun/NFS3VITA/build.yml?branch=main&label=build&style=flat-square
+[build-shield]: https://img.shields.io/github/actions/workflow/status/NDRWhun/NFS3VITA/build.yml?branch=main&label=build&style=for-the-badge&labelColor=1a1f3d&logo=githubactions&logoColor=white
 [build-url]: ../../actions/workflows/build.yml
-[version-shield]: https://img.shields.io/badge/version-1.0-e8283a?style=flat-square
-[version-url]: ../../releases
-[release-shield]: https://img.shields.io/github/v/release/NDRWhun/NFS3VITA?label=release&style=flat-square
+[release-shield]: https://img.shields.io/github/v/release/NDRWhun/NFS3VITA?label=release&style=for-the-badge&labelColor=1a1f3d&color=ff3b5c&logo=github&logoColor=white
 [release-url]: ../../releases
-[downloads-shield]: https://img.shields.io/github/downloads/NDRWhun/NFS3VITA/total?label=downloads&style=flat-square
+[downloads-shield]: https://img.shields.io/github/downloads/NDRWhun/NFS3VITA/total?label=downloads&style=for-the-badge&labelColor=1a1f3d&color=b44dff
 [downloads-url]: ../../releases
-[issues-shield]: https://img.shields.io/github/issues/NDRWhun/NFS3VITA?label=issues&style=flat-square
+[issues-shield]: https://img.shields.io/github/issues/NDRWhun/NFS3VITA?label=issues&style=for-the-badge&labelColor=1a1f3d&color=2f7bff&logo=github&logoColor=white
 [issues-url]: ../../issues
-[commit-shield]: https://img.shields.io/github/last-commit/NDRWhun/NFS3VITA?label=updated&style=flat-square
+[commit-shield]: https://img.shields.io/github/last-commit/NDRWhun/NFS3VITA?label=updated&style=for-the-badge&labelColor=1a1f3d&color=ff3b5c
 [commit-url]: ../../commits/main
-[platform-shield]: https://img.shields.io/badge/platform-PS%20Vita-4b6cb7?style=flat-square
+[platform-shield]: https://img.shields.io/badge/PS%20Vita-native-2f7bff?style=for-the-badge&labelColor=1a1f3d&logo=playstation&logoColor=white
 [platform-url]: https://vitasdk.org
-[renderer-shield]: https://img.shields.io/badge/renderer-native%20sceGxm-8a4fff?style=flat-square
-[renderer-url]: src/platform/gxm
-[resolution-shield]: https://img.shields.io/badge/resolution-960x544%20native-2f7bff?style=flat-square
+[resolution-shield]: https://img.shields.io/badge/960x544-widescreen-b44dff?style=for-the-badge&labelColor=1a1f3d
 [resolution-url]: #settings
-[patch-shield]: https://img.shields.io/badge/Modern%20Patch-1.6.1-b44dff?style=flat-square
+[renderer-shield]: https://img.shields.io/badge/renderer-sceGxm-ff3b5c?style=for-the-badge&labelColor=1a1f3d
+[renderer-url]: src/platform/gxm
+[patch-shield]: https://img.shields.io/badge/Modern%20Patch-1.6.1-b44dff?style=for-the-badge&labelColor=1a1f3d
 [patch-url]: https://gamebanana.com/mods/34590
-[base-shield]: https://img.shields.io/badge/base-nfs--recompiled-555?style=flat-square
+[base-shield]: https://img.shields.io/badge/base-nfs--recompiled-2f7bff?style=for-the-badge&labelColor=1a1f3d
 [base-url]: https://github.com/motor-dev/nfs-recompiled
-[license-shield]: https://img.shields.io/badge/license-MIT-blue?style=flat-square
+[license-shield]: https://img.shields.io/badge/license-MIT-ff3b5c?style=for-the-badge&labelColor=1a1f3d
 [license-url]: LICENSE
