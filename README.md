@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.svg" width="180" alt="NFS3VITA logo"></p>
+
 # NFS3VITA — Need for Speed III: Hot Pursuit on PS Vita
 
 A PlayStation Vita port of the [nfs-recompiled](https://github.com/motor-dev/nfs-recompiled)

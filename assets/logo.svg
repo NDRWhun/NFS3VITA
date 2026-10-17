@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>NFS3VITA</title>
+  <defs>
+    <radialGradient id="sky" cx="50%" cy="38%" r="70%">
+      <stop offset="0" stop-color="#1d4fb8"/>
+      <stop offset="0.55" stop-color="#0c2466"/>
+      <stop offset="1" stop-color="#040a1f"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff2a3d"/>
+      <stop offset="0.5" stop-color="#e8eefc"/>
+      <stop offset="1" stop-color="#2a7bff"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2f3d"/>
+      <stop offset="1" stop-color="#11141c"/>
+    </linearGradient>
+    <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.45" stop-color="#cfd8ea"/>
+      <stop offset="0.5" stop-color="#7f8aa3"/>
+      <stop offset="1" stop-color="#f4f7ff"/>
+    </linearGradient>
+    <linearGradient id="horizon" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff2a3d" stop-opacity="0"/>
+      <stop offset="0.3" stop-color="#ff2a3d" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#ffffff"/>
+      <stop offset="0.7" stop-color="#2a7bff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#2a7bff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="redGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff4a5a" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#ff2a3d" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="blueGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#4a92ff" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#2a7bff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="disc">
+      <circle cx="256" cy="256" r="232"/>
+    </clipPath>
+  </defs>
+
+  <circle cx="256" cy="256" r="252" fill="url(#ring)"/>
+  <circle cx="256" cy="256" r="240" fill="#05081a"/>
+
+  <g clip-path="url(#disc)">
+    <rect width="512" height="512" fill="url(#sky)"/>
+    <ellipse cx="70" cy="300" rx="190" ry="120" fill="url(#redGlow)"/>
+    <ellipse cx="442" cy="300" rx="190" ry="120" fill="url(#blueGlow)"/>
+
+    <path d="M0 330 L120 300 L190 318 L256 296 L330 316 L400 298 L512 326 L512 512 L0 512 Z" fill="#081233"/>
+
+    <path d="M236 312 L276 312 L470 512 L42 512 Z" fill="url(#road)"/>
+    <path d="M236 312 L42 512 L60 512 L240 312 Z" fill="#e8eefc" opacity="0.7"/>
+    <path d="M276 312 L470 512 L452 512 L272 312 Z" fill="#e8eefc" opacity="0.7"/>
+    <g fill="#ffcf2e">
+      <path d="M254 318 L258 318 L259 330 L253 330 Z"/>
+      <path d="M252 344 L260 344 L262 366 L250 366 Z"/>
+      <path d="M249 386 L263 386 L266 420 L246 420 Z"/>
+      <path d="M244 448 L268 448 L273 512 L239 512 Z"/>
+    </g>
+
+    <rect x="0" y="309" width="512" height="5" fill="url(#horizon)"/>
+
+    <g stroke="#e8eefc" stroke-linecap="round" opacity="0.35">
+      <line x1="40" y1="250" x2="150" y2="244" stroke-width="3"/>
+      <line x1="20" y1="276" x2="120" y2="272" stroke-width="2"/>
+      <line x1="362" y1="244" x2="472" y2="250" stroke-width="3"/>
+      <line x1="392" y1="272" x2="492" y2="276" stroke-width="2"/>
+    </g>
+  </g>
+
+  <g font-family="Arial Black, Arial, Helvetica, sans-serif" font-weight="900" font-style="italic" text-anchor="middle">
+    <text x="262" y="236" font-size="132" fill="#000a24" opacity="0.55" transform="skewX(-8)">NFS3</text>
+    <text x="256" y="230" font-size="132" fill="url(#chrome)" stroke="#0a1a4a" stroke-width="4" paint-order="stroke" transform="skewX(-8)">NFS3</text>
+    <text x="256" y="292" font-size="54" fill="#ffffff" letter-spacing="14" stroke="#05081a" stroke-width="6" paint-order="stroke">VITA</text>
+  </g>
+</svg>
