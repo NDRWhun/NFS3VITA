@@ -3,7 +3,7 @@
 # rebuilds only what changed. -Profile builds the sampling profiler (NFS3_PROFILE) in build-profile.
 param(
     [string]$Config = 'Release',
-    [switch]$Profile,
+    [Alias('Profile')][switch]$ProfileBuild,
     [switch]$Clean,
     [switch]$Reconfigure,
     [int]$Jobs = [Environment]::ProcessorCount
@@ -12,14 +12,16 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'env.ps1')
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..')
-$build = if ($Profile) { Join-Path $repo 'build-profile' } else { Join-Path $repo "build-$($Config.ToLower())" }
+# Native tools report failure through their exit code; Windows PowerShell 5.1 would stop on any stderr line.
+$ErrorActionPreference = 'Continue'
+$build = if ($ProfileBuild) { Join-Path $repo 'build-profile' } else { Join-Path $repo "build-$($Config.ToLower())" }
 
-if ($Clean -and (Test-Path $build)) { Remove-Item $build -Recurse -Force }
+if ($Clean -and (Test-Path $build)) { Remove-Item $build -Recurse -Force -ErrorAction Stop }
 
 if ($Reconfigure -or -not (Test-Path (Join-Path $build 'build.ninja'))) {
     $options = @("-DCMAKE_TOOLCHAIN_FILE=$env:VITASDK/share/vita.toolchain.cmake", "-DCMAKE_BUILD_TYPE=$Config")
     $options += if ($env:SCE_PSP2_SDK_DIR) { "-DSCE_PSP2_SDK_DIR=$env:SCE_PSP2_SDK_DIR" } else { '-USCE_PSP2_SDK_DIR' }
-    $options += if ($Profile) { '-DNFS3_PROFILE=ON' } else { '-DNFS3_PROFILE=OFF' }
+    $options += if ($ProfileBuild) { '-DNFS3_PROFILE=ON' } else { '-DNFS3_PROFILE=OFF' }
     cmake -S $repo -B $build -G Ninja @options
     if ($LASTEXITCODE -ne 0) { throw 'configure failed' }
 }

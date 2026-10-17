@@ -133,7 +133,7 @@ int main(int, char**)
     x86::mmxSelfTest();
     x86::fpuSelfTest();
     pf::Config::load("ux0:data/nfs3vita/nfs3vita.cfg");
-    pf::perf::init(pf::Config::getBool("perf_log", true));
+    pf::perf::init(pf::Config::getBool("perf_log", false));
     win32::InputScript::load("ux0:data/nfs3vita/autoinput.txt");
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);

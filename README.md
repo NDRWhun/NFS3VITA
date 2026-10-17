@@ -127,8 +127,8 @@ Optional settings go in `ux0:data/nfs3vita/nfs3vita.cfg`, one `key=value` per li
 ## Build (for developers)
 
 Only needed to build the VPK yourself. Needs [VitaSDK](https://vitasdk.org) (with `VITASDK` set), CMake 3.16+,
-Ninja, Python 3 (`pip install -r tools/recompiler/requirements.txt`) and PowerShell (Windows PowerShell 5.1 or
-PowerShell 7).
+Ninja, Python 3 and PowerShell (Windows PowerShell 5.1 or PowerShell 7). The scripts check for these and say what is
+missing; the recompiler's Python package (capstone) is installed automatically.
 
 The generated recompilation (`src/nfs3hp/disassembly/`, ~85 MB) and any game binary or data are not tracked: the build
 generates the code from your own game files. Only the exact versions listed in `tools/recompiler/generate.py` are
