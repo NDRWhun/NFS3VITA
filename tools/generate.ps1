@@ -15,11 +15,35 @@ $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) { $python = Get-Command python3 -ErrorAction Stop }
 
 New-Item -ItemType Directory -Force $Out | Out-Null
-Get-ChildItem $Out -File -Include *.cpp, *.h -Recurse | Remove-Item -Force
+$Out = (Resolve-Path $Out).Path
 
-$arguments = @((Join-Path $root 'recompiler\generate.py'), '--binaries', $Binaries, '--out', $Out)
-if ($Analysis) { $arguments += @('--analysis', $Analysis) }
-& $python.Source @arguments
-if ($LASTEXITCODE -ne 0) { throw 'generation failed' }
-$count = (Get-ChildItem $Out -File).Count
-Write-Host "Generated $count files into $Out"
+# Generate into a staging folder, then replace only files whose content changed, so unchanged files
+# keep their timestamps and the build recompiles just the changed ones.
+$stage = Join-Path ([IO.Path]::GetTempPath()) ("nfs3gen-" + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force $stage | Out-Null
+try {
+    $arguments = @((Join-Path $root 'recompiler\generate.py'), '--binaries', $Binaries, '--out', $stage)
+    if ($Analysis) { $arguments += @('--analysis', $Analysis) }
+    & $python.Source @arguments
+    if ($LASTEXITCODE -ne 0) { throw 'generation failed' }
+
+    $generated = Get-ChildItem $stage -File
+    $changed = 0
+    foreach ($file in $generated) {
+        $target = Join-Path $Out $file.Name
+        if (-not (Test-Path $target) -or (Get-FileHash $target).Hash -ne (Get-FileHash $file.FullName).Hash) {
+            Copy-Item $file.FullName $target -Force
+            $changed++
+        }
+    }
+    $names = @{}
+    foreach ($file in $generated) { $names[$file.Name] = $true }
+    $removed = 0
+    foreach ($file in Get-ChildItem $Out -File -Include *.cpp, *.h) {
+        if (-not $names.ContainsKey($file.Name)) { Remove-Item $file.FullName -Force; $removed++ }
+    }
+    Write-Host "Generated $($generated.Count) files into $Out ($changed changed, $removed removed)"
+}
+finally {
+    Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+}
