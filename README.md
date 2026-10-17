@@ -14,6 +14,34 @@ Vita backend: libgxm rendering, SceAudioOut audio, SceCtrl input and SceKernel t
 - You need your own copy of the game. Copy the installed game directory (including the
   `fedata` and `gamedata` folders from the CD) to `ux0:data/nfs3vita/` on the Vita.
 
+## Playing with the Modern Patch 1.6.1 (recommended)
+
+The port can be built from the `nfs3.exe` of the [Modern Patch 1.6.1](https://gamebanana.com/mods/34590) instead of
+the original: races run natively at 960x544 with the patch's 16:9 HUD, menus and field-of-view options. You need:
+
+- the Modern Patch 1.6.1, extracted (its `nfs3.exe` and data files);
+- from the original game: `voodoo2a.dll` and `softtria.dll` (the patch's own drivers use Glide 3, which the port
+  does not have), the `fedata` and `gamedata` folders (CD or installed game);
+- `eacsnd.dll` from either.
+
+Steps (PowerShell, after setting up the build environment below):
+
+```powershell
+# 1. one folder with the four binaries
+mkdir binaries
+copy <patch>\nfs3.exe, <patch>\eacsnd.dll, <game>\voodoo2a.dll, <game>\softtria.dll binaries
+# 2. recompile and build
+tools/generate.ps1 -Binaries binaries
+tools/build.ps1                       # -> build-release/NFS3VITA.vpk
+# 3. game data plus the patch's data files in one folder
+tools/stage-data.ps1 -Game <game> -ModernPatch <patch> -Out vita-data
+```
+
+Install `build-release/NFS3VITA.vpk` with VitaShell and copy the contents of `vita-data` to `ux0:data/nfs3vita/`.
+Races start at 960x544 on the first run. The 640x480 frontend menus are stretched to the full screen;
+`stretch=0` in `ux0:data/nfs3vita/nfs3vita.cfg` shows them in 4:3 with side bars, and `resolution=WIDTHxHEIGHT`
+picks another race resolution (for example `1024x768`, shown in 4:3).
+
 ## Building
 
 Requirements: [VitaSDK](https://vitasdk.org), CMake 3.16+, Ninja, and a clone of the upstream
@@ -37,8 +65,8 @@ tools/build.ps1            # -> build-release/NFS3VITA.vpk; rebuilds only what c
 ```
 
 `tools/generate.ps1` needs Python 3 with `pip install -r tools/recompiler/requirements.txt` and a directory
-holding the original `nfs3.exe`, `eacsnd.dll`, `softtria.dll` and `voodoo2a.dll` (their SHA-256 is checked; the
-upstream repository's `nfs3hp/` folder has them). `tools/import-upstream.ps1 -Upstream <path-to-nfs-recompiled>`
+holding `nfs3.exe`, `eacsnd.dll`, `softtria.dll` and `voodoo2a.dll` (their SHA-256 is checked; the upstream
+repository's `nfs3hp/` folder has the original ones). `tools/import-upstream.ps1 -Upstream <path-to-nfs-recompiled>`
 still imports upstream's pre-generated code instead.
 
 Or with CMake directly:
