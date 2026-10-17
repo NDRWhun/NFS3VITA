@@ -19,7 +19,7 @@ if (-not $python) { throw 'Python 3 not found on PATH (https://www.python.org/do
 # on any stderr line.
 function Invoke-Python {
     $ErrorActionPreference = 'Continue'
-    & $python.Source @args | Out-Host
+    & $python.Source @args | Write-Host
     return $LASTEXITCODE
 }
 
