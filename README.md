@@ -60,7 +60,7 @@ You need your own copy of Need for Speed III: Hot Pursuit (PC) and the
 - Copy the `fedata` and `gamedata` folders of your game (CD or installed game) to `ux0:data/nfs3vita/`.
 - From the Modern Patch 1.6.1 archive, copy `nfs3.ini` and the `drivers`, `fedata` and `gamedata` folders to
   `ux0:data/nfs3vita/`, overwriting the files from the previous step.
-- Launch from the LiveArea. Cross skips the intro movies.
+- Launch from the LiveArea.
 
 The 640x480 frontend menus and the loading screens are stretched to the full screen; see [Settings](#settings) to
 turn that off.
