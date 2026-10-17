@@ -13,6 +13,18 @@ UINT joyGetNumDevs(WinApplication* app, x86::CPU& cpu)
     return Gamepad::getCount();
 }
 
+// System sounds are not played.
+BOOL PlaySoundA(WinApplication* app, x86::CPU& cpu,
+                x86::reg32 pszSound, HANDLE hmod, DWORD fdwSound)
+{
+    NFS2_USE(app);
+    NFS2_USE(cpu);
+    NFS2_USE(pszSound);
+    NFS2_USE(hmod);
+    NFS2_USE(fdwSound);
+    return 1;
+}
+
 MMRESULT timeBeginPeriod(WinApplication* app, x86::CPU& cpu,
                          UINT uPeriod)
 {
@@ -40,6 +52,14 @@ MMRESULT timeGetDevCaps(WinApplication* app, x86::CPU& cpu,
     ptc->wPeriodMin = 1;
     ptc->wPeriodMax = 1000;
     return 0;
+}
+
+// Same clock as GetTickCount.
+DWORD timeGetTime(WinApplication* app, x86::CPU& cpu)
+{
+    NFS2_USE(app);
+    NFS2_USE(cpu);
+    return timeGetTickCount();
 }
 
 MMRESULT timeKillEvent(WinApplication* app, x86::CPU& cpu,

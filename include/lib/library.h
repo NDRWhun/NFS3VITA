@@ -26,6 +26,14 @@ public:
         return m_methods[symbolName];
     }
 
+    // Pseudo-address of an exported symbol, 0 if the library has none.
+    x86::reg32 find(const std::string& symbolName) const
+    {
+        const auto it = m_methods.find(symbolName);
+        return it == m_methods.end() ? 0 : it->second.first;
+    }
+
+    // By file name, ignoring case and any directory in front of it.
     static Library* findLibrary(std::string name);
     void registerSymbols(WinApplication* app);
 

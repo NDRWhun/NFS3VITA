@@ -37,6 +37,9 @@ void Library::registerSymbols(WinApplication *app)
 
 Library* Library::findLibrary(std::string name)
 {
+    const size_t separator = name.find_last_of("\\/:");
+    if (separator != std::string::npos)
+        name.erase(0, separator + 1);
     std::transform(name.begin(), name.end(), name.begin(), ::tolower);
     for (Library* l = s_libraries; l; l = l->m_next)
     {

@@ -474,6 +474,10 @@ static x86::reg32 grSstWinOpen(WinApplication* app, x86::CPU& cpu, HWND hWnd,
         width = 512;
         height = 256;
         break;
+    case GR_RESOLUTION_960x544:
+        width = 960;
+        height = 544;
+        break;
     case GR_RESOLUTION_1024x768:
         width = 1024;
         height = 768;

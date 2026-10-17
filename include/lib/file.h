@@ -84,6 +84,8 @@ public:
     static void setDataDirectory(const char* path);
     static void setCdDirectory(const char* path);
     static x86::reg32 remove(const char* filename);
+    // Host path of a guest path, without a trailing separator.
+    static std::string hostPath(const char* path);
     // Applies the filter to reads of files opened later whose host path ends with the suffix (lower case).
     // Before guest code runs.
     static void setReadFilter(const char* pathSuffix, ReadFilter filter);

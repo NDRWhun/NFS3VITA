@@ -10,7 +10,15 @@
 #include <lib/window.h>
 #include <lib/thread.h>
 #include <platform/log.h>
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <cstring>
+#include <map>
+#include <string>
+#include <strings.h>
+#include <sys/stat.h>
+#include <utility>
 #include <vector>
 
 namespace win32 { namespace kernel32
@@ -39,9 +47,18 @@ struct OSVERSIONINFOEXA
 BOOL CloseHandle(WinApplication* app, x86::CPU& cpu,
                  HANDLE hObject)
 {
-    NFS2_USE(cpu);
-    if (hObject)
+    if (!hObject)
+        return 1;
+    // Closing the last handle of a running thread stops and joins it; the thread needs the execution lock to
+    // return from guest code.
+    if (dynamic_cast<win32::Thread*>(app->getResource(hObject)))
+    {
+        app->unlockContext(cpu);
         app->freeResource(hObject);
+        app->lockContext(cpu);
+        return 1;
+    }
+    app->freeResource(hObject);
     return 1;
 }
 
@@ -80,10 +97,14 @@ BOOL CreateDirectoryA(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(lpPathName);
     NFS2_USE(lpSecurityAttributes);
-    NFS2_ASSERT(false);
-    return 0;
+    const std::string host = File::hostPath(lpPathName);
+    if (mkdir(host.c_str(), 0777) != 0)
+    {
+        pf::logError("CreateDirectoryA %s failed (%s)", lpPathName, host.c_str());
+        return 0;
+    }
+    return 1;
 }
 
 HANDLE CreateEventA(WinApplication* app, x86::CPU& cpu,
@@ -470,15 +491,11 @@ DWORD GetFileAttributesA(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    File f(lpFileName, GENERIC_READ, 0, OPEN_EXISTING);
-    if (f)
-    {
-        return 0x1;
-    }
-    else
-    {
+    struct stat status;
+    if (stat(File::hostPath(lpFileName).c_str(), &status) != 0)
         return 0xffffffff;
-    }
+    // Directories: FILE_ATTRIBUTE_DIRECTORY; files keep the read-only bit the runtime always reported.
+    return S_ISDIR(status.st_mode) ? 0x10 : 0x1;
 }
 
 BOOL GetFileTime(WinApplication* app, x86::CPU& cpu,
@@ -627,15 +644,8 @@ HMODULE GetModuleHandleA(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    if (lpModuleName)
-    {
-        NFS2_ASSERT(false);
-        return 0xffffffff;
-    }
-    else
-    {
-        return 1;
-    }
+    // Only the executable has a module handle; libraries are loaded with LoadLibraryA.
+    return lpModuleName ? 0 : 1;
 }
 
 UINT GetOEMCP(WinApplication* app, x86::CPU& cpu)
@@ -664,10 +674,11 @@ FARPROC GetProcAddress(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(cpu);
     win32::LibraryHandle* libraryHandle = dynamic_cast<win32::LibraryHandle*>(app->getResource(hModule));
-    win32::Library* l = libraryHandle->getLibrary();
-    win32::Library::Symbol s = (*l)[lpProcName];
-    NFS2_ASSERT(s.first);
-    return s.first;
+    NFS2_ASSERT(libraryHandle);
+    const x86::reg32 address = libraryHandle->getLibrary()->find(lpProcName);
+    if (!address)
+        pf::logInfo("GetProcAddress: no %s", lpProcName);
+    return address;
 }
 
 HANDLE GetStdHandle(WinApplication* app, x86::CPU& cpu,
@@ -846,19 +857,12 @@ HMODULE LoadLibraryA(WinApplication* app, x86::CPU& cpu,
                      LPCSTR lpLibFileName)
 {
     NFS2_USE(cpu);
-    pf::logDebug("Loading library %s", lpLibFileName);
     win32::LibraryHandle* lib = new win32::LibraryHandle(lpLibFileName);
     if (*lib)
-    {
-        //lib->getLibrary()->registerSymbols(app);
         return app->allocateResource(lib);
-    }
-    else
-    {
-        delete lib;
-        //NFS2_ASSERT(false);
-        return -1;
-    }
+    pf::logInfo("LoadLibraryA: %s is not available", lpLibFileName);
+    delete lib;
+    return 0;
 }
 
 x86::reg32 MapViewOfFile(WinApplication* app, x86::CPU& cpu,
@@ -1429,6 +1433,302 @@ BOOL WriteFile(WinApplication* app, x86::CPU& cpu,
         app->lockContext(cpu);
         return result;
     }
+}
+
+// ---- Private profiles (ini files) ----------------------------------------------------------------------------
+
+namespace
+{
+
+typedef std::vector<std::pair<std::string, std::string>> ProfileSection;
+
+std::string trim(const std::string& text)
+{
+    const size_t first = text.find_first_not_of(" \t\r");
+    if (first == std::string::npos)
+        return std::string();
+    return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
+}
+
+// The key=value lines of a section, keys and values trimmed and values without surrounding quotes. Empty when the
+// file or the section does not exist.
+ProfileSection readProfileSection(const char* fileName, const char* section)
+{
+    ProfileSection entries;
+    File file(fileName, GENERIC_READ, 0, OPEN_EXISTING);
+    if (!file)
+        return entries;
+    std::string text(file.size(), '\0');
+    x86::reg32 length = 0;
+    file.read(&text[0], x86::reg32(text.size()), &length);
+    text.resize(length);
+    bool inSection = false;
+    size_t position = 0;
+    while (position < text.size())
+    {
+        size_t end = text.find('\n', position);
+        if (end == std::string::npos)
+            end = text.size();
+        const std::string line = trim(text.substr(position, end - position));
+        position = end + 1;
+        if (line.empty() || line[0] == ';')
+            continue;
+        if (line[0] == '[')
+        {
+            const size_t close = line.find(']');
+            inSection = close != std::string::npos && strcasecmp(trim(line.substr(1, close - 1)).c_str(), section) == 0;
+            continue;
+        }
+        const size_t equals = line.find('=');
+        if (!inSection || equals == std::string::npos)
+            continue;
+        std::string value = trim(line.substr(equals + 1));
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+            value = value.substr(1, value.size() - 2);
+        entries.emplace_back(trim(line.substr(0, equals)), value);
+    }
+    return entries;
+}
+
+bool readProfileValue(const char* fileName, const char* section, const char* key, std::string* value)
+{
+    for (const auto& entry : readProfileSection(fileName, section))
+    {
+        if (strcasecmp(entry.first.c_str(), key) == 0)
+        {
+            *value = entry.second;
+            return true;
+        }
+    }
+    return false;
+}
+
+}
+
+UINT GetPrivateProfileIntA(WinApplication* app, x86::CPU& cpu,
+                          LPCSTR lpAppName, LPCSTR lpKeyName, int nDefault, LPCSTR lpFileName)
+{
+    NFS2_USE(app);
+    NFS2_USE(cpu);
+    std::string value;
+    if (!readProfileValue(lpFileName, lpAppName, lpKeyName, &value))
+        return UINT(nDefault);
+    return UINT(strtol(value.c_str(), nullptr, 10));
+}
+
+DWORD GetPrivateProfileSectionA(WinApplication* app, x86::CPU& cpu,
+                                LPCSTR lpAppName, LPSTR lpReturnedString, DWORD nSize, LPCSTR lpFileName)
+{
+    NFS2_USE(app);
+    NFS2_USE(cpu);
+    if (nSize < 2)
+        return 0;
+    // "key=value\0" per entry, then "\0"; entries that do not fit are left out.
+    DWORD length = 0;
+    for (const auto& entry : readProfileSection(lpFileName, lpAppName))
+    {
+        const std::string line = entry.first + "=" + entry.second;
+        if (length + line.size() + 2 > nSize)
+            break;
+        memcpy(lpReturnedString + length, line.c_str(), line.size() + 1);
+        length += DWORD(line.size() + 1);
+    }
+    lpReturnedString[length] = 0;
+    return length;
+}
+
+DWORD GetPrivateProfileStringA(WinApplication* app, x86::CPU& cpu,
+                               LPCSTR lpAppName, LPCSTR lpKeyName, LPCSTR lpDefault, LPSTR lpReturnedString,
+                               DWORD nSize, LPCSTR lpFileName)
+{
+    NFS2_USE(app);
+    NFS2_USE(cpu);
+    NFS2_ASSERT(lpAppName && lpKeyName);
+    if (nSize == 0)
+        return 0;
+    std::string value;
+    if (!readProfileValue(lpFileName, lpAppName, lpKeyName, &value))
+        value = trim(lpDefault ? lpDefault : "");
+    const DWORD length = std::min(DWORD(value.size()), nSize - 1);
+    memcpy(lpReturnedString, value.c_str(), length);
+    lpReturnedString[length] = 0;
+    return length;
+}
+
+// ---- Process heap: one guest memory block per allocation ------------------------------------------------------
+
+namespace
+{
+
+const DWORD HEAP_ZERO_MEMORY = 0x8;
+
+class ProcessHeap : public GenericResource
+{
+public:
+    std::map<x86::reg32, SIZE_T> sizes;     // requested size per allocation
+};
+
+ProcessHeap* processHeap(WinApplication* app, HANDLE heap)
+{
+    ProcessHeap* result = dynamic_cast<ProcessHeap*>(app->getResource(heap));
+    NFS2_ASSERT(result);
+    return result;
+}
+
+}
+
+HANDLE GetProcessHeap(WinApplication* app, x86::CPU& cpu)
+{
+    NFS2_USE(cpu);
+    static HANDLE s_handle = 0;
+    if (!s_handle)
+        s_handle = app->allocateResource(new ProcessHeap());
+    return s_handle;
+}
+
+x86::reg32 HeapAlloc(WinApplication* app, x86::CPU& cpu,
+                     HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes)
+{
+    NFS2_USE(cpu);
+    MemMap* block = new MemMap(dwBytes ? dwBytes : 1);
+    const x86::reg32 address = block->getBlockStart();
+    if (dwFlags & HEAP_ZERO_MEMORY)
+        memset(&app->getMemory<x86::reg8>(address), 0, dwBytes);
+    processHeap(app, hHeap)->sizes[address] = dwBytes;
+    return address;
+}
+
+BOOL HeapFree(WinApplication* app, x86::CPU& cpu,
+              HANDLE hHeap, DWORD dwFlags, x86::reg32 lpMem)
+{
+    NFS2_USE(cpu);
+    NFS2_USE(dwFlags);
+    if (!lpMem)
+        return 1;
+    if (!processHeap(app, hHeap)->sizes.erase(lpMem))
+        return 0;
+    delete MemMap::findBlock(lpMem);
+    return 1;
+}
+
+x86::reg32 HeapReAlloc(WinApplication* app, x86::CPU& cpu,
+                       HANDLE hHeap, DWORD dwFlags, x86::reg32 lpMem, SIZE_T dwBytes)
+{
+    ProcessHeap* heap = processHeap(app, hHeap);
+    const auto old = heap->sizes.find(lpMem);
+    if (old == heap->sizes.end())
+        return 0;
+    const SIZE_T oldSize = old->second;
+    const x86::reg32 address = HeapAlloc(app, cpu, hHeap, dwFlags & ~HEAP_ZERO_MEMORY, dwBytes);
+    memcpy(&app->getMemory<x86::reg8>(address), &app->getMemory<x86::reg8>(lpMem), std::min(oldSize, dwBytes));
+    if ((dwFlags & HEAP_ZERO_MEMORY) && dwBytes > oldSize)
+        memset(&app->getMemory<x86::reg8>(address + oldSize), 0, dwBytes - oldSize);
+    HeapFree(app, cpu, hHeap, 0, lpMem);
+    return address;
+}
+
+SIZE_T HeapSize(WinApplication* app, x86::CPU& cpu,
+                HANDLE hHeap, DWORD dwFlags, x86::reg32 lpMem)
+{
+    NFS2_USE(cpu);
+    NFS2_USE(dwFlags);
+    ProcessHeap* heap = processHeap(app, hHeap);
+    const auto entry = heap->sizes.find(lpMem);
+    return entry == heap->sizes.end() ? SIZE_T(-1) : entry->second;
+}
+
+// ---- Resources of the executable ------------------------------------------------------------------------------
+
+namespace
+{
+
+x86::reg32 s_imageBase = 0;
+x86::reg32 s_resourceSection = 0;
+
+// OffsetToData of the entry of a resource directory (PE IMAGE_RESOURCE_DIRECTORY) with an integer id, or with a
+// name when id is a string address (compared without case, as Windows does); 0 when there is none.
+x86::reg32 findResourceEntry(WinApplication* app, x86::reg32 directory, x86::reg32 id)
+{
+    const x86::reg32 count = x86::reg32(app->getMemory<x86::reg16>(directory + 12)) +
+                             app->getMemory<x86::reg16>(directory + 14);
+    const bool byName = id >= 0x10000;
+    const char* name = byName ? &app->getMemory<char>(id) : nullptr;
+    for (x86::reg32 i = 0; i < count; ++i)
+    {
+        const x86::reg32 entry = directory + 16 + 8 * i;
+        const x86::reg32 nameWord = app->getMemory<x86::reg32>(entry);
+        bool match;
+        if (nameWord & 0x80000000)
+        {
+            // Counted UTF-16 name.
+            const x86::reg32 text = s_resourceSection + (nameWord & 0x7fffffff);
+            const x86::reg32 length = app->getMemory<x86::reg16>(text);
+            match = byName && strlen(name) == length;
+            for (x86::reg32 c = 0; match && c < length; ++c)
+                match = x86::reg32(toupper(name[c])) == app->getMemory<x86::reg16>(text + 2 + 2 * c);
+        }
+        else
+        {
+            match = !byName && nameWord == id;
+        }
+        if (match)
+            return app->getMemory<x86::reg32>(entry + 4);
+    }
+    return 0;
+}
+
+}
+
+void setResourceSection(x86::reg32 imageBase, x86::reg32 address)
+{
+    s_imageBase = imageBase;
+    s_resourceSection = address;
+}
+
+// The handle is the guest address of the resource's data entry (RVA, size, code page, reserved).
+x86::reg32 FindResourceA(WinApplication* app, x86::CPU& cpu,
+                         HMODULE hModule, x86::reg32 lpName, x86::reg32 lpType)
+{
+    NFS2_USE(cpu);
+    NFS2_USE(hModule);
+    if (!s_resourceSection)
+        return 0;
+    // Type, name and language levels; the first language is taken.
+    const x86::reg32 type = findResourceEntry(app, s_resourceSection, lpType);
+    if (!(type & 0x80000000))
+        return 0;
+    const x86::reg32 name = findResourceEntry(app, s_resourceSection + (type & 0x7fffffff), lpName);
+    if (!(name & 0x80000000))
+        return 0;
+    const x86::reg32 languages = s_resourceSection + (name & 0x7fffffff);
+    if (app->getMemory<x86::reg16>(languages + 12) + app->getMemory<x86::reg16>(languages + 14) == 0)
+        return 0;
+    const x86::reg32 data = app->getMemory<x86::reg32>(languages + 16 + 4);
+    return data & 0x80000000 ? 0 : s_resourceSection + data;
+}
+
+x86::reg32 LoadResource(WinApplication* app, x86::CPU& cpu,
+                        HMODULE hModule, x86::reg32 hResInfo)
+{
+    NFS2_USE(cpu);
+    NFS2_USE(hModule);
+    return hResInfo ? s_imageBase + app->getMemory<x86::reg32>(hResInfo) : 0;
+}
+
+x86::reg32 LockResource(WinApplication* app, x86::CPU& cpu,
+                        x86::reg32 hResData)
+{
+    NFS2_USE(app);
+    NFS2_USE(cpu);
+    return hResData;
+}
+
+DWORD SizeofResource(WinApplication* app, x86::CPU& cpu,
+                     HMODULE hModule, x86::reg32 hResInfo)
+{
+    NFS2_USE(cpu);
+    NFS2_USE(hModule);
+    return hResInfo ? x86::reg32(app->getMemory<x86::reg32>(hResInfo + 4)) : 0;
 }
 
 HFILE _lclose(WinApplication* app, x86::CPU& cpu, HFILE hFile)

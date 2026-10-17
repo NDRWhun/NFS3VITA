@@ -265,12 +265,15 @@ BOOL GetClientRect(WinApplication* app, x86::CPU& cpu,
     return 1;
 }
 
+// Pseudo handles: the desktop window and the device context of any window (GetDeviceCaps describes the display).
+static const HWND DesktopWindow = 0xffff0001;
+static const HDC WindowDC = 0xffff0002;
+
 HWND GetDesktopWindow(WinApplication* app, x86::CPU& cpu)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_ASSERT(false);
-    return -1;
+    return DesktopWindow;
 }
 
 SHORT GetKeyState(WinApplication* app, x86::CPU& cpu,
@@ -334,8 +337,7 @@ HDC GetWindowDC(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(hWnd);
-    NFS2_ASSERT(false);
-    return -1;
+    return WindowDC;
 }
 
 LONG GetWindowLongA(WinApplication* app, x86::CPU& cpu,
@@ -491,8 +493,8 @@ BOOL SetWindowPos(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(cx);
     NFS2_USE(cy);
     NFS2_USE(uFlags);
-    NFS2_ASSERT(false);
-    return 0;
+    // The window always covers the display.
+    return 1;
 }
 
 HHOOK SetWindowsHookExA(WinApplication* app, x86::CPU& cpu,

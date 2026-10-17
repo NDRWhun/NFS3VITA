@@ -17,6 +17,9 @@ namespace win32 { namespace glide2x
 
 extern Library* s_glide2xRegistry;
 
+// Resolution code outside the Glide 2.x range that grSstWinOpen accepts for the Vita display size.
+static const x86::reg32 GR_RESOLUTION_960x544 = 0x80;
+
 }}
 
 #endif

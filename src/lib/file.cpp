@@ -23,8 +23,8 @@ static bool isSeparator(char c)
     return c == '\\' || c == '/';
 }
 
-// Resolves "." and ".." in a guest path that starts with "X:"; keeps a trailing backslash.
-static std::string normalizeGuestDirectory(const std::string& path)
+// Resolves "." and ".." in a guest path that starts with "X:"; the result ends with a backslash when the path did.
+static std::string resolveDots(const std::string& path)
 {
     std::string result = path.substr(0, 2);
     result[0] = char(toupper(result[0]));
@@ -49,7 +49,17 @@ static std::string normalizeGuestDirectory(const std::string& path)
     }
     for (std::vector<std::string>::const_iterator it = parts.begin(); it != parts.end(); ++it)
         result += "\\" + *it;
-    result += "\\";
+    if (parts.empty() || (!path.empty() && isSeparator(path.back())))
+        result += "\\";
+    return result;
+}
+
+// resolveDots with a trailing backslash.
+static std::string normalizeGuestDirectory(const std::string& path)
+{
+    std::string result = resolveDots(path);
+    if (!isSeparator(result.back()))
+        result += "\\";
     return result;
 }
 
@@ -74,7 +84,7 @@ static std::string moveToRoot(const std::string& path)
         return s_dataDirectory + "nul.tmp";
     if (device == "conout$")
         return "tty0:";
-    std::string full = absoluteGuestPath(path);
+    std::string full = resolveDots(absoluteGuestPath(path));
     std::string rest = full.substr(2);
     while (!rest.empty() && isSeparator(rest[0]))
         rest.erase(0, 1);
@@ -393,6 +403,14 @@ void File::setCdDirectory(const char* path)
     s_cdDirectory = path;
     if (s_cdDirectory.back() != '/')
         s_cdDirectory.append("/");
+}
+
+std::string File::hostPath(const char* path)
+{
+    std::string host = normalizePath(moveToRoot(path));
+    while (host.size() > 1 && host.back() == '/')
+        host.pop_back();
+    return host;
 }
 
 x86::reg32 File::remove(const char *filename)

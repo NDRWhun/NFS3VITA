@@ -58,6 +58,8 @@ HANDLE FindFirstFileA(WinApplication* app, x86::CPU& cpu,
                       LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindFileData);
 BOOL FindNextFileA(WinApplication* app, x86::CPU& cpu,
                    HANDLE hFindFile, LPWIN32_FIND_DATAA lpFindFileData);
+x86::reg32 FindResourceA(WinApplication* app, x86::CPU& cpu,
+                         HMODULE hModule, x86::reg32 lpName, x86::reg32 lpType);
 BOOL FlushFileBuffers(WinApplication* app, x86::CPU& cpu,
                       HANDLE hFile);
 BOOL FreeEnvironmentStringsA(WinApplication* app, x86::CPU& cpu,
@@ -115,8 +117,16 @@ UINT GetOEMCP(WinApplication* app, x86::CPU& cpu);
 BOOL GetOverlappedResult(WinApplication* app, x86::CPU& cpu,
                          HANDLE hFile, LPOVERLAPPED lpOverlapped,
                          LPDWORD lpNumberOfBytesTransferred, BOOL bWait);
+UINT GetPrivateProfileIntA(WinApplication* app, x86::CPU& cpu,
+                          LPCSTR lpAppName, LPCSTR lpKeyName, int nDefault, LPCSTR lpFileName);
+DWORD GetPrivateProfileSectionA(WinApplication* app, x86::CPU& cpu,
+                                LPCSTR lpAppName, LPSTR lpReturnedString, DWORD nSize, LPCSTR lpFileName);
+DWORD GetPrivateProfileStringA(WinApplication* app, x86::CPU& cpu,
+                               LPCSTR lpAppName, LPCSTR lpKeyName, LPCSTR lpDefault, LPSTR lpReturnedString,
+                               DWORD nSize, LPCSTR lpFileName);
 FARPROC GetProcAddress(WinApplication* app, x86::CPU& cpu,
                        HMODULE hModule, LPCSTR lpProcName);
+HANDLE GetProcessHeap(WinApplication* app, x86::CPU& cpu);
 HANDLE GetStdHandle(WinApplication* app, x86::CPU& cpu,
                     DWORD nStdHandle);
 void GetSystemInfo(WinApplication* app, x86::CPU& cpu,
@@ -136,6 +146,14 @@ BOOL GetVolumeInformationA(WinApplication* app, x86::CPU& cpu,
                            DWORD nFileSystemNameSize);
 UINT GetWindowsDirectoryA(WinApplication* app, x86::CPU& cpu,
                           LPSTR lpBuffer, UINT uSize);
+x86::reg32 HeapAlloc(WinApplication* app, x86::CPU& cpu,
+                     HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes);
+BOOL HeapFree(WinApplication* app, x86::CPU& cpu,
+              HANDLE hHeap, DWORD dwFlags, x86::reg32 lpMem);
+x86::reg32 HeapReAlloc(WinApplication* app, x86::CPU& cpu,
+                       HANDLE hHeap, DWORD dwFlags, x86::reg32 lpMem, SIZE_T dwBytes);
+SIZE_T HeapSize(WinApplication* app, x86::CPU& cpu,
+                HANDLE hHeap, DWORD dwFlags, x86::reg32 lpMem);
 void GlobalMemoryStatus(WinApplication* app, x86::CPU& cpu,
                         LPMEMORYSTATUS lpBuffer);
 void InitializeCriticalSection(WinApplication* app, x86::CPU& cpu,
@@ -144,6 +162,10 @@ void LeaveCriticalSection(WinApplication* app, x86::CPU& cpu,
                           LPCRITICAL_SECTION lpCriticalSection);
 HMODULE LoadLibraryA(WinApplication* app, x86::CPU& cpu,
                      LPCSTR lpLibFileName);
+x86::reg32 LoadResource(WinApplication* app, x86::CPU& cpu,
+                        HMODULE hModule, x86::reg32 hResInfo);
+x86::reg32 LockResource(WinApplication* app, x86::CPU& cpu,
+                        x86::reg32 hResData);
 x86::reg32 MapViewOfFile(WinApplication* app, x86::CPU& cpu,
                          HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh,
                          DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap);
@@ -203,6 +225,8 @@ BOOL SetThreadPriority(WinApplication* app, x86::CPU& cpu,
                        HANDLE hThread, int nPriority);
 LPTOP_LEVEL_EXCEPTION_FILTER SetUnhandledExceptionFilter(WinApplication* app, x86::CPU& cpu,
                                                          LPTOP_LEVEL_EXCEPTION_FILTER lpTopLevelExceptionFilter);
+DWORD SizeofResource(WinApplication* app, x86::CPU& cpu,
+                     HMODULE hModule, x86::reg32 hResInfo);
 DWORD SleepEx(WinApplication* app, x86::CPU& cpu,
               DWORD dwMilliseconds, BOOL bAlertable);
 BOOL TerminateThread(WinApplication* app, x86::CPU& cpu,
@@ -242,6 +266,9 @@ BOOL WriteFile(WinApplication* app, x86::CPU& cpu,
                LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped);
 HFILE _lclose(WinApplication* app, x86::CPU& cpu, HFILE hFile);
 HFILE _lopen(WinApplication* app, x86::CPU& cpu, LPCSTR lpPathName, int iReadWrite);
+
+// Resource section of the executable (FindResourceA): its guest address and the image base its RVAs refer to.
+void setResourceSection(x86::reg32 imageBase, x86::reg32 address);
 
 }}
 
