@@ -3,12 +3,12 @@
 #include <lib/winapp.h>
 #include <platform/log.h>
 
-// _THRASH_setstate@8 (voodoo2a sub_a84990) with state 0xe and a non-zero density calls grFogMode(GR_FOG_WITH_TABLE),
-// builds a 64-entry fog table on its stack (65 guest pow and exp, sub_a83870) and passes it to grFogTable. It
+// _THRASH_setstate@8 (voodoo2a RVA 0x2790) with state 0xe and a non-zero density calls grFogMode(GR_FOG_WITH_TABLE),
+// builds a 64-entry fog table on its stack (65 guest pow and exp, RVA 0x1670) and passes it to grFogTable. It
 // writes no guest globals and returns 0. nfs3.exe sends it up to 3 times per rendered view (sub_47a880). The host's
 // grFogMode, grFogTable and grFogColorValue do nothing, so the hook returns what the original returns without
 // building the table. Density 0 (fog off) and all other states go to the original. nfs3.exe calls it through the
-// pointer [0x9ef96c], so every call goes through dynamic_call; voodoo2a's own reset (sub_a84180) calls it directly
+// pointer [0x9ef96c], so every call goes through dynamic_call; voodoo2a's own reset (RVA 0x1f80) calls it directly
 // with density 0 only.
 
 namespace nfs3hp { namespace fog {

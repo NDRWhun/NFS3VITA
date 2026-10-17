@@ -38,6 +38,7 @@ const uint32_t GpuDoneGapUs         = 1000; // display callback started this lon
 const SceUID   InvalidUid           = -1;
 
 static bool s_framebufferBgr = false; // 565 texture swizzle for Vita3K, see Device::setFramebuffer16Bgr
+static bool s_stretch = false;        // Glide frames fill the display, see Device::setStretch
 
 struct DisplayData
 {
@@ -281,9 +282,12 @@ struct Device::Impl
     unsigned int            glideTextureUnit = 0;
     unsigned int            blitTextureUnit = 0;
 
-    // Static geometry: [0..3] full screen quad, [4..7] game viewport quad, [8..11] and [12..15] the bars left and
-    // right of the game viewport
+    // Static geometry, 16 vertices per display box (the area a source image is fitted into): [0..3] full screen
+    // quad, [4..7] the box, [8..11] and [12..15] the bars beside it. A set is written once, on first use.
+    static const uint32_t   QuadSets = 8;
     QuadVertex*             quadVertices = nullptr;
+    Rect                    quadBoxes[QuadSets] = {};
+    uint32_t                quadSetCount = 0;
     SceUID                  quadVerticesUid = InvalidUid;
     uint16_t*               quadIndices = nullptr;
     SceUID                  quadIndicesUid = InvalidUid;
@@ -324,15 +328,14 @@ struct Device::Impl
     // Render thread
     Thread*                 thread = nullptr;
     volatile bool           running = false;
-    Rect                    viewport = { 0, 0, DisplayWidth, DisplayHeight };
     uint32_t                endSceneTime = 0;       // render thread: perf::now() after the last game frame's scene
-    bool                    wideShown = false;      // render thread: the last game frame drew outside the viewport
+    bool                    wideShown = false;      // render thread: the last game frame drew outside its box
 
     bool initCore();
     bool initDisplay();
     bool initPrograms();
     bool initBuffers();
-    void updateQuads();
+    uint32_t quadSet(const Rect& box);
     bool allocateRange(uint32_t bytes, uint32_t* offset);
     void freeRange(uint32_t offset, uint32_t bytes);
     void releaseQuarantine(bool force);
@@ -351,6 +354,19 @@ struct Device::Impl
     void finishFrame(uint32_t vblanks, uint32_t frameIndex);
     void present(uint32_t vblanks, uint32_t frameIndex);
 };
+
+// Largest rectangle with the aspect of a w x h image, centred on the display; widths of pillarboxes are rounded
+// down to a multiple of 4.
+static Rect fitBox(uint32_t w, uint32_t h)
+{
+    if (w * DisplayHeight > h * DisplayWidth)
+    {
+        const int height = int(DisplayWidth * h / w) & ~1;
+        return Rect{ 0, (DisplayHeight - height) / 2, DisplayWidth, height };
+    }
+    const int width = int(DisplayHeight * w / h) & ~3;
+    return Rect{ (DisplayWidth - width) / 2, 0, width, DisplayHeight };
+}
 
 bool Device::Impl::initCore()
 {
@@ -606,7 +622,7 @@ bool Device::Impl::initPrograms()
 
 bool Device::Impl::initBuffers()
 {
-    quadVertices = static_cast<QuadVertex*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, sizeof(QuadVertex) * 16, 4,
+    quadVertices = static_cast<QuadVertex*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, sizeof(QuadVertex) * 16 * QuadSets, 4,
                                                      SCE_GXM_MEMORY_ATTRIB_READ, &quadVerticesUid));
     quadIndices = static_cast<uint16_t*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, sizeof(uint16_t) * 4, 4,
                                                   SCE_GXM_MEMORY_ATTRIB_READ, &quadIndicesUid));
@@ -616,7 +632,7 @@ bool Device::Impl::initBuffers()
                                                       SCE_GXM_MEMORY_ATTRIB_READ, &triangleIndicesUid));
     for (uint32_t i = 0; i < MaxVertices; ++i)
         triangleIndices[i] = uint16_t(i);
-    updateQuads();
+    quadSet(fitBox(4, 3));      // set 0: its full screen quad is used by drawImage
 
     // Two notification words per slot; frame indices start at 1, so a zeroed word never matches.
     volatile unsigned int* notifications = sceGxmGetNotificationRegion();
@@ -639,32 +655,63 @@ bool Device::Impl::initBuffers()
     return true;
 }
 
-// Rebuilds the static quads for the current viewport (NDC, v = 0 at the top).
-void Device::Impl::updateQuads()
+// First vertex of the static quads for a box (NDC, v = 0 at the top). Render thread.
+uint32_t Device::Impl::quadSet(const Rect& box)
 {
+    for (uint32_t i = 0; i < quadSetCount; ++i)
+    {
+        const Rect& b = quadBoxes[i];
+        if (b.x == box.x && b.y == box.y && b.w == box.w && b.h == box.h)
+            return 16 * i;
+    }
+    if (quadSetCount == QuadSets)
+    {
+        logError("gxm: no static quad set left for a %dx%d box", box.w, box.h);
+        return 0;
+    }
+    const uint32_t set = quadSetCount++;
+    quadBoxes[set] = box;
+    QuadVertex* v = quadVertices + 16 * set;
     const float fx0 = -1.0f, fx1 = 1.0f, fy0 = 1.0f, fy1 = -1.0f;
-    quadVertices[0] = { fx0, fy0, 0.0f, 0.0f };
-    quadVertices[1] = { fx1, fy0, 1.0f, 0.0f };
-    quadVertices[2] = { fx0, fy1, 0.0f, 1.0f };
-    quadVertices[3] = { fx1, fy1, 1.0f, 1.0f };
+    v[0] = { fx0, fy0, 0.0f, 0.0f };
+    v[1] = { fx1, fy0, 1.0f, 0.0f };
+    v[2] = { fx0, fy1, 0.0f, 1.0f };
+    v[3] = { fx1, fy1, 1.0f, 1.0f };
 
-    const float x0 = float(viewport.x) * 2.0f / DisplayWidth - 1.0f;
-    const float x1 = float(viewport.x + viewport.w) * 2.0f / DisplayWidth - 1.0f;
-    const float y0 = 1.0f - float(viewport.y) * 2.0f / DisplayHeight;
-    const float y1 = 1.0f - float(viewport.y + viewport.h) * 2.0f / DisplayHeight;
-    quadVertices[4] = { x0, y0, 0.0f, 0.0f };
-    quadVertices[5] = { x1, y0, 1.0f, 0.0f };
-    quadVertices[6] = { x0, y1, 0.0f, 1.0f };
-    quadVertices[7] = { x1, y1, 1.0f, 1.0f };
+    const float x0 = float(box.x) * 2.0f / DisplayWidth - 1.0f;
+    const float x1 = float(box.x + box.w) * 2.0f / DisplayWidth - 1.0f;
+    const float y0 = 1.0f - float(box.y) * 2.0f / DisplayHeight;
+    const float y1 = 1.0f - float(box.y + box.h) * 2.0f / DisplayHeight;
+    v[4] = { x0, y0, 0.0f, 0.0f };
+    v[5] = { x1, y0, 1.0f, 0.0f };
+    v[6] = { x0, y1, 0.0f, 1.0f };
+    v[7] = { x1, y1, 1.0f, 1.0f };
 
-    quadVertices[8] = { fx0, fy0, 0.0f, 0.0f };
-    quadVertices[9] = { x0, fy0, 0.0f, 0.0f };
-    quadVertices[10] = { fx0, fy1, 0.0f, 0.0f };
-    quadVertices[11] = { x0, fy1, 0.0f, 0.0f };
-    quadVertices[12] = { x1, fy0, 0.0f, 0.0f };
-    quadVertices[13] = { fx1, fy0, 0.0f, 0.0f };
-    quadVertices[14] = { x1, fy1, 0.0f, 0.0f };
-    quadVertices[15] = { fx1, fy1, 0.0f, 0.0f };
+    if (box.w == DisplayWidth)
+    {
+        // Bars above and below.
+        v[8] = { fx0, fy0, 0.0f, 0.0f };
+        v[9] = { fx1, fy0, 0.0f, 0.0f };
+        v[10] = { fx0, y0, 0.0f, 0.0f };
+        v[11] = { fx1, y0, 0.0f, 0.0f };
+        v[12] = { fx0, y1, 0.0f, 0.0f };
+        v[13] = { fx1, y1, 0.0f, 0.0f };
+        v[14] = { fx0, fy1, 0.0f, 0.0f };
+        v[15] = { fx1, fy1, 0.0f, 0.0f };
+    }
+    else
+    {
+        // Bars left and right.
+        v[8] = { fx0, fy0, 0.0f, 0.0f };
+        v[9] = { x0, fy0, 0.0f, 0.0f };
+        v[10] = { fx0, fy1, 0.0f, 0.0f };
+        v[11] = { x0, fy1, 0.0f, 0.0f };
+        v[12] = { x1, fy0, 0.0f, 0.0f };
+        v[13] = { fx1, fy0, 0.0f, 0.0f };
+        v[14] = { x1, fy1, 0.0f, 0.0f };
+        v[15] = { fx1, fy1, 0.0f, 0.0f };
+    }
+    return 16 * set;
 }
 
 int Device::Impl::threadEntry(void* self)
@@ -769,6 +816,11 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
     beginScene(&colorSurface[backBuffer], displaySync[backBuffer]);
 
     static const float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    const uint32_t sw = frame.sourceWidth ? frame.sourceWidth : 640;
+    const uint32_t sh = frame.sourceHeight ? frame.sourceHeight : 480;
+    const Rect full = { 0, 0, DisplayWidth, DisplayHeight };
+    const Rect box = s_stretch && frame.kind == FrameGlide ? full : fitBox(sw, sh);
+    const uint32_t quads = quadSet(box);
 
     if (frame.kind == FrameFramebuffer16 || frame.kind == FrameFramebuffer8)
     {
@@ -783,8 +835,8 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
         sceGxmTextureSetMagFilter(&texture, SCE_GXM_TEXTURE_FILTER_LINEAR);
         sceGxmTextureSetUAddrMode(&texture, SCE_GXM_TEXTURE_ADDR_CLAMP);
         sceGxmTextureSetVAddrMode(&texture, SCE_GXM_TEXTURE_ADDR_CLAMP);
-        drawQuad(0, nullptr, clearV, clearF, black);
-        drawQuad(4, &texture, blitV, blitF, nullptr);
+        drawQuad(quads, nullptr, clearV, clearF, black);
+        drawQuad(quads + 4, &texture, blitV, blitF, nullptr);
         wideShown = false;
     }
     else
@@ -798,37 +850,34 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
                 1.0f };
             if (frame.wide)
             {
-                drawQuad(0, nullptr, clearV, clearF, color);
+                drawQuad(quads, nullptr, clearV, clearF, color);
             }
             else
             {
-                drawQuad(0, nullptr, clearV, clearF, black);
-                drawQuad(4, nullptr, clearV, clearF, color);
+                drawQuad(quads, nullptr, clearV, clearF, black);
+                drawQuad(quads + 4, nullptr, clearV, clearF, color);
             }
         }
         else
         {
             // No clear: keep drawing over the previously displayed frame, without world pixels this frame
-            // does not cover beside the game area.
+            // does not cover beside its box.
             drawImage(previousImage());
             if (wideShown && !frame.wide)
             {
-                drawQuad(8, nullptr, clearV, clearF, black);
-                drawQuad(12, nullptr, clearV, clearF, black);
+                drawQuad(quads + 8, nullptr, clearV, clearF, black);
+                drawQuad(quads + 12, nullptr, clearV, clearF, black);
             }
         }
         wideShown = frame.wide;
 
         if (frame.vertexCount)
         {
-            const float sw = float(frame.sourceWidth ? frame.sourceWidth : 640);
-            const float sh = float(frame.sourceHeight ? frame.sourceHeight : 480);
-            const Rect full = { 0, 0, DisplayWidth, DisplayHeight };
 
             sceGxmSetVertexProgram(context, glideV);
             sceGxmSetVertexStream(context, 0, frame.vertices);
             Mapping mapping = frame.drawCalls.empty() ? MapBox : frame.drawCalls.front().mapping;
-            setGlideMapping(mapping == MapFull ? full : viewport, sw, sh);
+            setGlideMapping(mapping == MapFull ? full : box, float(sw), float(sh));
 
             uint32_t first = 0;
             for (const DrawCall& call : frame.drawCalls)
@@ -839,7 +888,7 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
                     if (call.mapping != mapping)
                     {
                         mapping = call.mapping;
-                        setGlideMapping(mapping == MapFull ? full : viewport, sw, sh);
+                        setGlideMapping(mapping == MapFull ? full : box, float(sw), float(sh));
                     }
                     setGlideTexture(call);
                     sceGxmSetFrontDepthFunc(context, call.zTest ? SCE_GXM_DEPTH_FUNC_LESS_EQUAL : SCE_GXM_DEPTH_FUNC_ALWAYS);
@@ -945,7 +994,6 @@ Device& Device::get()
 
 Device::Device()
     :   m_impl(nullptr)
-    ,   m_stretch(false)
 {
 }
 
@@ -958,7 +1006,6 @@ bool Device::init()
     if (m_impl)
         return true;
     m_impl = new Impl();
-    m_impl->viewport = viewport();
     if (!m_impl->initCore() || !m_impl->initDisplay() || !m_impl->initPrograms() || !m_impl->initBuffers())
         return false;
 
@@ -970,8 +1017,7 @@ bool Device::init()
     m_impl->running = true;
     m_impl->thread = new Thread("nfs3_render", &Impl::threadEntry, m_impl, Thread::PriorityHigh, 256 * 1024, Thread::CpuAll);
     m_impl->thread->start();
-    logInfo("gxm device ready: %dx%d, viewport %d,%d %dx%d", DisplayWidth, DisplayHeight,
-            m_impl->viewport.x, m_impl->viewport.y, m_impl->viewport.w, m_impl->viewport.h);
+    logInfo("gxm device ready: %dx%d", DisplayWidth, DisplayHeight);
     return true;
 }
 
@@ -1105,6 +1151,11 @@ uint32_t Device::submittedFrameCount() const
     return s_submittedFrames.load();
 }
 
+void Device::setStretch(bool stretch)
+{
+    s_stretch = stretch;
+}
+
 void Device::setFramebuffer16Bgr(bool bgr)
 {
     s_framebufferBgr = bgr;
@@ -1234,15 +1285,7 @@ void Device::releaseTexture(Texture* texture)
 
 Rect Device::viewport() const
 {
-    if (m_stretch)
-    {
-        Rect full = { 0, 0, DisplayWidth, DisplayHeight };
-        return full;
-    }
-    // 4:3 game area centered on the 16:9 screen, width rounded down to a multiple of 4.
-    int width = (DisplayHeight * 4 / 3) & ~3;
-    Rect rect = { (DisplayWidth - width) / 2, 0, width, DisplayHeight };
-    return rect;
+    return fitBox(4, 3);
 }
 
 }}

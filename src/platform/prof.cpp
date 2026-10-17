@@ -2,6 +2,7 @@
 #include <platform/config.h>
 #include <platform/log.h>
 #include <platform/sync.h>
+#include <nfs3hp_layout.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <algorithm>
@@ -34,7 +35,7 @@ const uint32_t EmptyKey = 0xffffffffu;          // bits 28-30 of a key are alway
 // Slot values: 0 in a thread block never written (the arena starts zeroed), host shims (import and library
 // pseudo-addresses from 0x400000), then guest code up to the end of the image sections (memmap.cpp).
 const x86::reg32 GuestCodeStart = 0x401000;
-const x86::reg32 GuestCodeEnd = 0xa98000;
+const x86::reg32 GuestCodeEnd = (nfs3hp::layout::imageEnd + 4095) & ~4095u;
 const x86::reg32 InvalidAddress = AddressMask;
 
 // Written by the runThread wrapper, read by the sampler. cpu is published last and cleared first; reading is set

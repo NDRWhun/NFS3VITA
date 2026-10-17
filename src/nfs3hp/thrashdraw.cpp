@@ -1,5 +1,6 @@
 #include "thrashdraw.h"
 #include <voodoo2a.h>
+#include <nfs3hp_layout.h>
 #include <lib/gliderenderer.h>
 #include <lib/winapp.h>
 #include <platform/gxm.h>
@@ -13,11 +14,11 @@
 // - x, y through double (fld/fstp); oow = w copied;
 // - ooz = z * [DepthScale]; sow, tow = u, v * (w * [TextureScale]), the products in double like the x87
 //   code, each result rounded to float once (under the same FPSCR as the emulated x87);
-// - r, g, b, a = [ColorTable + 4 * byte], a table THRASH fills with float(i) (sub_a83f50): the bytes themselves.
+// - r, g, b, a = [ColorTable + 4 * byte], a table THRASH fills with float(i) (RVA 0x1d50): the bytes themselves.
 // Triangles: drawtri (v0, v1, v2); drawquad and each drawquadmesh quad (v0, v1, v2), (v2, v3, v0); drawtrifan
 // (v0, vi, vi+1) for i = 1..count.
 // A replacement runs the original when THRASH routes triangles elsewhere (its multipass and antialiasing wrappers,
-// sub_a848e0), while the colour table is not filled, or without an open Glide window. Only guest code calls the
+// RVA 0x26e0), while the colour table is not filled, or without an open Glide window. Only guest code calls the
 // exports, through the pointer table at 0x9ef9xx (dynamic_call), under the execution lock. eax, ecx and edx (stdcall
 // scratch registers) are left unchanged and the x87 stack is untouched; the originals leave it balanced too.
 
@@ -26,13 +27,14 @@ namespace nfs3hp { namespace thrashdraw {
 namespace
 {
 
-// voodoo2a guest addresses.
-const x86::reg32 GrDrawTriangle       = 0xa936a8;   // Glide grDrawTriangle, from GetProcAddress
-const x86::reg32 TriangleFunction     = 0xa93710;   // called per triangle by drawtri and drawtrifan
-const x86::reg32 QuadTriangleFunction = 0xa9370c;   // called per triangle by drawquad and drawquadmesh
-const x86::reg32 ColorTable           = 0xa93210;   // 256 floats
-const x86::reg32 DepthScale           = 0xa9235c;   // float
-const x86::reg32 TextureScale         = 0xa92358;   // float
+// voodoo2a guest addresses (image base + RVA).
+const x86::reg32 Voodoo2a             = nfs3hp::layout::voodoo2aBase;
+const x86::reg32 GrDrawTriangle       = Voodoo2a + 0x114a8;     // Glide grDrawTriangle, from GetProcAddress
+const x86::reg32 TriangleFunction     = Voodoo2a + 0x11510;     // called per triangle by drawtri and drawtrifan
+const x86::reg32 QuadTriangleFunction = Voodoo2a + 0x1150c;     // called per triangle by drawquad and drawquadmesh
+const x86::reg32 ColorTable           = Voodoo2a + 0x11010;     // 256 floats
+const x86::reg32 DepthScale           = Voodoo2a + 0x1015c;     // float
+const x86::reg32 TextureScale         = Voodoo2a + 0x10158;     // float
 const x86::reg32 RecordSize           = 0x20;
 
 win32::MethodPtr s_originalTri = nullptr;
@@ -137,7 +139,7 @@ inline void storeTriangle(pf::gxm::Vertex* out, const Words& a, const Words& b, 
     store(out + 2, c);
 }
 
-// _THRASH_drawtri@12 (sub_a85770): three record pointers.
+// _THRASH_drawtri@12 (RVA 0x3570): three record pointers.
 void drawTri(win32::WinApplication* app, x86::CPU& cpu)
 {
     Context context;
@@ -154,7 +156,7 @@ void drawTri(win32::WinApplication* app, x86::CPU& cpu)
     cpu.esp += 4 + 12;
 }
 
-// _THRASH_drawquad@16 (sub_a85300): four record pointers.
+// _THRASH_drawquad@16 (RVA 0x3100): four record pointers.
 void drawQuad(win32::WinApplication* app, x86::CPU& cpu)
 {
     Context context;
@@ -174,7 +176,7 @@ void drawQuad(win32::WinApplication* app, x86::CPU& cpu)
     cpu.esp += 4 + 16;
 }
 
-// _THRASH_drawtrifan@8 (sub_a86000): triangle count, then count + 2 consecutive records.
+// _THRASH_drawtrifan@8 (RVA 0x3e00): triangle count, then count + 2 consecutive records.
 void drawFan(win32::WinApplication* app, x86::CPU& cpu)
 {
     Context context;
@@ -201,7 +203,7 @@ void drawFan(win32::WinApplication* app, x86::CPU& cpu)
     }
 }
 
-// _THRASH_drawquadmesh@12 (sub_a85520): quad count, record array, then four record indices per quad.
+// _THRASH_drawquadmesh@12 (RVA 0x3320): quad count, record array, then four record indices per quad.
 void drawQuadMesh(win32::WinApplication* app, x86::CPU& cpu)
 {
     Context context;

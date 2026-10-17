@@ -75,6 +75,7 @@ set(NFS3_GAME_PORT_SOURCES
   src/nfs3hp/native/transform.cpp
   src/nfs3hp/settings.cpp
   src/nfs3hp/thrashdraw.cpp
+  src/nfs3hp/videomodes.cpp
   src/nfs3hp/widescreen.cpp
 )
 

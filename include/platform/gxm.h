@@ -47,7 +47,7 @@ struct Texture;
 // Display area that Glide screen coordinates (0..sourceWidth, 0..sourceHeight) are mapped to.
 enum Mapping : uint8_t
 {
-    MapBox,     // the 4:3 game area, Device::viewport()
+    MapBox,     // the source image's aspect fitted into the display (4:3: the game area), or the display (setStretch)
     MapFull     // the whole display (widescreen world views)
 };
 
@@ -120,9 +120,11 @@ public:
     // Frames submitted so far; readable from any thread.
     uint32_t submittedFrameCount() const;
 
-    void setStretch(bool stretch) { m_stretch = stretch; }
+    // Glide frames fill the display whatever their aspect; framebuffer frames (movies) keep theirs. Before init.
+    void setStretch(bool stretch);
     // Vita3K reads the 565 swizzle the other way round; hardware wants RGB.
     void setFramebuffer16Bgr(bool bgr);
+    // The 4:3 game area centred on the display.
     Rect viewport() const;
 
 private:
@@ -133,7 +135,6 @@ private:
 
     struct Impl;
     Impl*       m_impl;
-    bool        m_stretch;
 };
 
 }}

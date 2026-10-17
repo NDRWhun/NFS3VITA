@@ -11,12 +11,15 @@
 #include <fpu.h>
 #include <mmx.h>
 #include <nfs3hp.h>
+#include <nfs3hp_layout.h>
+#include <winapi/kernel32.h>
 #include "fog.h"
 #include "gamespeed.h"
 #include "mastertimer.h"
 #include "menulists.h"
 #include "settings.h"
 #include "thrashdraw.h"
+#include "videomodes.h"
 #include "widescreen.h"
 #include <psp2/ctrl.h>
 #include <psp2/power.h>
@@ -101,6 +104,19 @@ static void ensureCdMarker()
     }
 }
 
+// The original exe reads its renderer from the registry; the port has the Voodoo 2 driver only.
+static void addRegistryKeys(win32::WinApplication& app)
+{
+    static const char* key = "SOFTWARE\\Electronic Arts\\Need For Speed III";
+    app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, key, "3D Device Description", new win32::RegistryValue("3Dfx Voodoo 2"));
+    app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, key, "3D Card", new win32::RegistryValue("3Dfx Voodoo 2"));
+    app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, key, "Thrash Driver", new win32::RegistryValue("voodoo2"));
+    app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, key, "Group", new win32::RegistryValue("3Dfx"));
+    app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, key, "D3D Device", new win32::RegistryValue(x86::reg32(0)));
+    app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, key, "Triple Buffer", new win32::RegistryValue(x86::reg32(0)));
+    app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, key, "Hardware Acceleration", new win32::RegistryValue(x86::reg32(1)));
+}
+
 int main(int, char**)
 {
     scePowerSetArmClockFrequency(444);
@@ -120,9 +136,19 @@ int main(int, char**)
     win32::InputScript::load("ux0:data/nfs3vita/autoinput.txt");
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
-    ensureInstallWin();
-    ensureCdMarker();
+    // The Modern Patch reads nfs3.ini and drivers\<ThrashDriver>\thrash.ini (installed with its files) instead of
+    // install.win, the CD and the registry.
+    const bool modernPatch = nfs3hp::layout::binaries == nfs3hp::layout::Binaries::ModernPatch161;
+    pf::logInfo("binaries: %s", modernPatch ? "Modern Patch 1.6.1" : "original");
+    if (!modernPatch)
+    {
+        ensureInstallWin();
+        ensureCdMarker();
+    }
     pf::gxm::Device::get().setFramebuffer16Bgr(pf::Config::getBool("vita3k_bgr565", false));
+    // The Modern Patch races at 960x544, so only its 640x480 frontend is stretched; the original exe's race HUD is
+    // 4:3 and would be stretched too, so it stays pillarboxed unless asked for.
+    pf::gxm::Device::get().setStretch(pf::Config::getBool("stretch", modernPatch));
     if (!pf::gxm::Device::get().init())
         pf::fatal("graphics initialisation failed");
 
@@ -130,22 +156,25 @@ int main(int, char**)
     win32::File::setCdDirectory(s_dataDirectory);
     {
         nfs3hp::Application app("nfs3.exe");
-        app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "3D Device Description", new win32::RegistryValue("3Dfx Voodoo 2"));
-        app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "3D Card", new win32::RegistryValue("3Dfx Voodoo 2"));
-        app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "Thrash Driver", new win32::RegistryValue("voodoo2"));
-        app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "Group", new win32::RegistryValue("3Dfx"));
-        app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "D3D Device", new win32::RegistryValue(x86::reg32(0)));
-        app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "Triple Buffer", new win32::RegistryValue(x86::reg32(0)));
-        app.addRegistryKey(win32::HKEY_LOCAL_MACHINE, "SOFTWARE\\Electronic Arts\\Need For Speed III", "Hardware Acceleration", new win32::RegistryValue(x86::reg32(1)));
-        if (pf::Config::getBool("widescreen", true))
-            nfs3hp::widescreen::install(app);
+        win32::kernel32::setResourceSection(nfs3hp::layout::imageBase, nfs3hp::layout::resourceSection);
+        if (modernPatch)
+        {
+            // The patch lays out 16:9 itself and has the option lists the original lacks.
+            nfs3hp::videomodes::install(app);
+        }
         else
-            pf::logInfo("widescreen: off");
+        {
+            addRegistryKeys(app);
+            if (pf::Config::getBool("widescreen", true))
+                nfs3hp::widescreen::install(app);
+            else
+                pf::logInfo("widescreen: off");
+            nfs3hp::menulists::install(app);
+        }
         if (pf::perf::enabled())
             nfs3hp::gamespeed::install(app);
         nfs3hp::fog::install(app);
         nfs3hp::thrashdraw::install(app);
-        nfs3hp::menulists::install(app);
         nfs3hp::settings::install(app);
         if (pf::Config::getBool("native_timer", true))
             nfs3hp::mastertimer::install(app);

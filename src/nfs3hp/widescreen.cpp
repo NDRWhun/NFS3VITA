@@ -155,7 +155,7 @@ bool isWorldView(win32::WinApplication& app, const ClipWindow& window)
     return false;
 }
 
-// Replaces _THRASH_clip@16 (voodoo2a sub_a848b0).
+// Replaces _THRASH_clip@16 (voodoo2a RVA 0x26b0).
 void thrashClip(win32::WinApplication* app, x86::CPU& cpu)
 {
     // stdcall: return slot at [esp], then x0, y0, x1, y1; the original pops them.

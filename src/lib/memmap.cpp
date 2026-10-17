@@ -1,6 +1,7 @@
 #include <lib/memmap.h>
 #include <lib/mutex.h>
 #include <platform/log.h>
+#include <nfs3hp_layout.h>
 #include <psp2/kernel/sysmem.h>
 #include <cstdlib>
 #include <cstring>
@@ -12,8 +13,8 @@ namespace win32
 static const x86::reg32 s_simulatedMemory = 64*1024*1024;
 // One byte per 4 KB block of the simulated memory, page-aligned.
 static const x86::reg32 s_blockMapSize = (s_simulatedMemory / 4096 + 4095) & ~4095u;
-// End of the highest image section (voodoo2a .rsrc at 0xa97200, 0x400 bytes), page-aligned.
-static const x86::reg32 s_sectionLimit = 0xa98000;
+// End of the highest image section (the generated layout), page-aligned.
+static const x86::reg32 s_sectionLimit = (nfs3hp::layout::imageEnd + 4095) & ~4095u;
 // Layout: sections, block map, simulated memory.
 static const x86::reg32 s_arenaSize = s_sectionLimit + s_blockMapSize + s_simulatedMemory;
 static_assert(s_arenaSize % 4096 == 0, "memblock sizes are whole pages");
