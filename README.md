@@ -1,112 +1,205 @@
-<p align="center"><img src="assets/logo.svg" width="180" alt="NFS3VITA logo"></p>
+<a id="readme-top"></a>
 
-# NFS3VITA — Need for Speed III: Hot Pursuit on PS Vita
+<div align="center">
 
-A PlayStation Vita port of the [nfs-recompiled](https://github.com/motor-dev/nfs-recompiled)
-static recompilation of *Need for Speed III: Hot Pursuit* (Win32, 1998). The recompiled game
-code runs on a virtual x86 CPU; this repository replaces the SDL3/OpenGL runtime with a native
-Vita backend: libgxm rendering, SceAudioOut audio, SceCtrl input and SceKernel threads.
+<img src="assets/logo.svg" alt="NFS3VITA" width="128" height="128">
 
-## Installing
+<h3 align="center">NFS3VITA</h3>
 
-The release VPK is built from the `nfs3.exe` of the [Modern Patch 1.6.1](https://gamebanana.com/mods/34590) by
-natko: races run natively at 960x544 with the patch's 16:9 HUD, in-race menus and field-of-view options. The game
-data is not included; you need your own copy of the game and the Modern Patch 1.6.1 archive.
+<p align="center">
+  <b>Need for Speed III: Hot Pursuit, on the PS Vita</b>
+  <br />
+  <br />
+  A port of Need for Speed III: Hot Pursuit (1998) to the PS Vita,
+  <br />
+  built on the <a href="https://github.com/motor-dev/nfs-recompiled">nfs-recompiled</a> static recompilation with a native sceGxm backend.
+  <br />
+  <br />
+  <a href="../../releases"><b>Download the latest build »</b></a>
+  <br />
+  <br />
+  <a href="#setup-for-players">Setup</a>
+  &nbsp;·&nbsp;
+  <a href="#controls">Controls</a>
+  &nbsp;·&nbsp;
+  <a href="../../issues">Report Bug</a>
+</p>
 
-1. Install `NFS3VITA.vpk` from the releases page with VitaShell.
-2. Copy the `fedata` and `gamedata` folders of your game (CD or installed game) to `ux0:data/nfs3vita/`.
-3. From the Modern Patch 1.6.1 archive, copy `nfs3.ini` and the `drivers`, `fedata` and `gamedata` folders to
-   `ux0:data/nfs3vita/`, overwriting the files from step 2.
-4. Start the game. Cross skips the intro movies.
+[![release][release-shield]][release-url]&nbsp;[![downloads][downloads-shield]][downloads-url]&nbsp;[![issues][issues-shield]][issues-url]&nbsp;[![last commit][commit-shield]][commit-url]
 
-Races start at 960x544. The 640x480 frontend menus and the loading screens are stretched to the full screen.
-Optional settings go in `ux0:data/nfs3vita/nfs3vita.cfg`, one `key=value` per line:
+[![platform][platform-shield]][platform-url]&nbsp;[![renderer][renderer-shield]][renderer-url]&nbsp;[![base][base-shield]][base-url]&nbsp;[![license][license-shield]][license-url]
 
-| key | effect |
-|---|---|
-| `stretch=0` | menus and loading screens in 4:3 with side bars |
-| `resolution=WIDTHxHEIGHT` | another race resolution, for example `1024x768` (stretched to the screen, or 4:3 with side bars with `stretch=0`) |
+</div>
 
-## Building (optional)
+<details>
+  <summary>Table of Contents</summary>
+  <ol>
+    <li><a href="#setup-for-players">Setup (for players)</a></li>
+    <li>
+      <a href="#controls">Controls</a>
+      <ul>
+        <li><a href="#race">Race</a></li>
+        <li><a href="#menus">Menus</a></li>
+      </ul>
+    </li>
+    <li><a href="#settings">Settings</a></li>
+    <li><a href="#known-issues">Known issues</a></li>
+    <li><a href="#build-for-developers">Build (for developers)</a></li>
+    <li><a href="#credits">Credits</a></li>
+    <li><a href="#license">License</a></li>
+  </ol>
+</details>
 
-Only needed to build the VPK yourself. The generated recompilation (`src/nfs3hp/disassembly/`, ~85 MB) and any
-game binary or data are not tracked; the build generates the code from your own copy of the game files. Only the
-exact file versions listed in `tools/recompiler/generate.py` are accepted (their SHA-256 is checked).
+## Setup (for players)
 
-### With the Modern Patch 1.6.1
+You need your own copy of Need for Speed III: Hot Pursuit (PC) and the
+[Modern Patch 1.6.1](https://gamebanana.com/mods/34590) archive by natko. The release build is made from the patch's
+`nfs3.exe`, so races run natively at 960x544 with its 16:9 HUD, in-race menus and field-of-view options.
 
-You need:
+- Install `NFS3VITA.vpk` from [Releases](../../releases) with VitaShell.
+- Copy the `fedata` and `gamedata` folders of your game (CD or installed game) to `ux0:data/nfs3vita/`.
+- From the Modern Patch 1.6.1 archive, copy `nfs3.ini` and the `drivers`, `fedata` and `gamedata` folders to
+  `ux0:data/nfs3vita/`, overwriting the files from the previous step.
+- Launch from the LiveArea. Cross skips the intro movies.
 
-- the Modern Patch 1.6.1, extracted (its `nfs3.exe` and data files);
-- from the original game: `voodoo2a.dll` and `softtria.dll` (the patch's own drivers use Glide 3, which the port
-  does not have), the `fedata` and `gamedata` folders (CD or installed game);
-- `eacsnd.dll` from either.
+The 640x480 frontend menus and the loading screens are stretched to the full screen; see [Settings](#settings) to
+turn that off.
 
-Steps (PowerShell, after setting up the build environment below):
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Controls
+
+### Race
+
+| Button | Action |
+|:--:|--------|
+| <img src="assets/icons/r.svg" width="20" alt="R"> | Accelerate |
+| <img src="assets/icons/l.svg" width="20" alt="L"> | Brake / reverse |
+| <img src="assets/icons/lstick.svg" width="18" alt="Left stick"> Left stick | Steer (analog) |
+| <img src="assets/icons/dpad-left.svg" width="18" alt="D-pad Left"> <img src="assets/icons/dpad-right.svg" width="18" alt="D-pad Right"> | Steer, full lock |
+| <img src="assets/icons/dpad-up.svg" width="18" alt="D-pad Up"> <img src="assets/icons/dpad-down.svg" width="18" alt="D-pad Down"> | Shift up / down (manual gearbox) |
+| <img src="assets/icons/square.svg" width="18" alt="Square"> | Handbrake |
+| <img src="assets/icons/triangle.svg" width="18" alt="Triangle"> | Change camera view |
+| <img src="assets/icons/cross.svg" width="18" alt="Cross"> | Horn (siren when playing cop) |
+| <img src="assets/icons/circle.svg" width="18" alt="Circle"> (hold) | Look behind |
+| <img src="assets/icons/rstick.svg" width="18" alt="Right stick"> Right stick left | Reset car |
+| <img src="assets/icons/rstick.svg" width="18" alt="Right stick"> Right stick up | Headlights on / off |
+| <img src="assets/icons/rstick.svg" width="18" alt="Right stick"> Right stick down | Spike strip (cop) |
+| <img src="assets/icons/rstick.svg" width="18" alt="Right stick"> Right stick right | Free, bindable in the Controls menu |
+| <img src="assets/icons/select.svg" height="18" alt="Select"> | Map on / off |
+| <img src="assets/icons/start.svg" height="18" alt="Start"> | Pause |
+
+The pad buttons are the game's own joystick bindings, so they can be changed in Options → Controllers. Pause, map
+and look behind are fixed keyboard keys in the game.
+
+### Menus
+
+| Button | Action |
+|:--:|--------|
+| <img src="assets/icons/lstick.svg" width="18" alt="Left stick"> Left stick / D-pad | Move the selection |
+| <img src="assets/icons/cross.svg" width="18" alt="Cross"> <img src="assets/icons/start.svg" height="18" alt="Start"> | Select (Enter) |
+| <img src="assets/icons/circle.svg" width="18" alt="Circle"> <img src="assets/icons/select.svg" height="18" alt="Select"> | Back (Escape) |
+| <img src="assets/icons/square.svg" width="18" alt="Square"> <img src="assets/icons/l.svg" width="20" alt="L"> <img src="assets/icons/r.svg" width="20" alt="R"> | Space |
+
+Text fields (player name) open the on-screen keyboard; Enter confirms, Escape cancels.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Settings
+
+Optional settings go in `ux0:data/nfs3vita/nfs3vita.cfg`, one `key=value` per line.
+
+| Key | Default | What it does |
+|------|---------|--------------|
+| `stretch` | `1` | `0` = menus and loading screens in 4:3 with side bars |
+| `resolution` | `960x544` | Another race resolution, for example `1024x768` (stretched, or 4:3 with side bars with `stretch=0`) |
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Known issues
+
+- Fog is not drawn: the game's THRASH fog tables are skipped.
+- Options → Graphics → Screen Size cannot be selected with the pad; it lists only 960x544, use `resolution` instead.
+- Split screen has no pad for the second player.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Build (for developers)
+
+Only needed to build the VPK yourself. Needs [VitaSDK](https://vitasdk.org) (with `VITASDK` set), CMake 3.16+,
+Ninja, Python 3 (`pip install -r tools/recompiler/requirements.txt`) and PowerShell (Windows PowerShell 5.1 or
+PowerShell 7).
+
+The generated recompilation (`src/nfs3hp/disassembly/`, ~85 MB) and any game binary or data are not tracked: the build
+generates the code from your own game files. Only the exact versions listed in `tools/recompiler/generate.py` are
+accepted (their SHA-256 is checked).
+
+With the Modern Patch 1.6.1 you need its `nfs3.exe`, the original game's `voodoo2a.dll` and `softtria.dll` (the
+patch's own drivers use Glide 3, which the port does not have), and `eacsnd.dll` from either.
 
 ```powershell
-# 1. one folder with the four binaries
 mkdir binaries
 copy <patch>\nfs3.exe, <patch>\eacsnd.dll, <game>\voodoo2a.dll, <game>\softtria.dll binaries
-# 2. recompile and build
-tools/generate.ps1 -Binaries binaries
-tools/build.ps1                       # -> build-release/NFS3VITA.vpk
-# 3. game data plus the patch's data files in one folder
-tools/stage-data.ps1 -Game <game> -ModernPatch <patch> -Out vita-data
+tools/generate.ps1 -Binaries binaries      # recompile the binaries into src/nfs3hp/disassembly
+tools/build.ps1                            # -> build-release/NFS3VITA.vpk; rebuilds only what changed
+tools/stage-data.ps1 -Game <game> -ModernPatch <patch> -Out vita-data   # -> contents of ux0:data/nfs3vita/
 ```
 
-Install `build-release/NFS3VITA.vpk` with VitaShell and copy the contents of `vita-data` to `ux0:data/nfs3vita/`.
+The original `nfs3.exe` (the upstream repository's `nfs3hp/` folder has the accepted version) still builds: races
+then render in 4:3 (up to 1024x768) with the port's own widescreen world view and the original 4:3 HUD.
 
-### With the original nfs3.exe
+A full build compiles ~85 MB of generated C++. It only recurs when the generated code or a header it includes
+changes; `tools/generate.ps1` rewrites only the generated files whose content changed. The shaders ship prebuilt in
+`shaders/gxp/`; the official PSP2 SDK (`host_tools/bin/psp2cgc`) is only needed to change them.
 
-The original `nfs3.exe` still builds: races then render in 4:3 (up to 1024x768) with the port's own widescreen world
-view (Hor+) and the original 4:3 HUD. Copy the game's `fedata` and `gamedata` folders to `ux0:data/nfs3vita/`.
+| Path | Contents |
+|------|----------|
+| `include/` | virtual x86 CPU (cpu/fpu/mmx), `lib/` runtime headers, `winapi/` shim headers, `platform/` |
+| `src/lib/` | runtime: guest memory, threads, Win32 shims, Glide and DirectDraw presentation |
+| `src/platform/` | Vita backend: gxm device and render thread, audio, input, sync, logging |
+| `src/nfs3hp/` | entry point, game hooks, `native/` hand-written replacements (+ generated `disassembly/`) |
+| `shaders/` | Cg programs; `gxp/` holds their compiled binaries |
+| `tools/` | recompiler, generate, build, data staging and environment scripts |
 
-### Build environment
-
-Requirements: [VitaSDK](https://vitasdk.org) (with `VITASDK` set), CMake 3.16+, Ninja and Python 3 (for the
-recompiler). The shaders ship prebuilt in `shaders/gxp/`; the official PSP2 SDK (`host_tools/bin/psp2cgc`) is only
-needed to change them.
-
-With PowerShell (Windows PowerShell 5.1 or PowerShell 7):
-
-```powershell
-tools/generate.ps1 -Binaries <dir>   # recompiles nfs3.exe + its DLLs with tools/recompiler
-tools/build.ps1            # -> build-release/NFS3VITA.vpk; rebuilds only what changed
-```
-
-`tools/generate.ps1` needs Python 3 with `pip install -r tools/recompiler/requirements.txt` and a directory
-holding `nfs3.exe`, `eacsnd.dll`, `softtria.dll` and `voodoo2a.dll` (their SHA-256 is checked; the upstream
-repository's `nfs3hp/` folder has the original ones).
-
-Or with CMake directly:
-
-```sh
-cmake -S . -B build-release -G Ninja -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake" -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release
-```
-
-A full build compiles ~85 MB of generated C++. It only recurs when the generated code changes or a header it
-includes changes (for example `include/x86.h`, `cpu.h`, `fpu.h`, `lib/winapp.h`); `tools/generate.ps1` rewrites only
-the generated files whose content changed. Other changes rebuild a few files.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Credits
 
-- [nfs-recompiled](https://github.com/motor-dev/nfs-recompiled) by motor-dev: the static recompilation of the game,
-  its virtual x86 CPU and Win32 runtime that this port is based on.
-- [Grarak](https://github.com/Grarak): [psp2-tooling](https://github.com/Grarak/psp2-tooling), used to profile the
+- [nfs-recompiled](https://github.com/motor-dev/nfs-recompiled) (motor-dev) — the static recompilation of the game,
+  its virtual x86 CPU and Win32 runtime that this port builds on.
+- [Modern Patch](https://gamebanana.com/mods/34590) (natko) — the widescreen HUD, menus and fixes of the release build.
+- [Grarak](https://github.com/Grarak) — [psp2-tooling](https://github.com/Grarak/psp2-tooling), used to profile the
   port on hardware, and [mh3-wii](https://github.com/Grarak/mh3-wii), a statically recompiled game running at full
   speed that set the performance goal for this port.
-- [Modern Patch](https://gamebanana.com/mods/34590) by natko: widescreen HUD, menus and fixes of the release build.
+- Electronic Arts — the original *Need for Speed III: Hot Pursuit*.
 
-## Layout
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-```
-cmake/          shader compilation, embedding, options
-include/        virtual x86 CPU (cpu/fpu/mmx), lib/ runtime headers, winapi/ shim headers, platform/
-shaders/        Cg programs; gxp/ holds their psp2cgc binaries
-src/lib/        runtime: guest memory, threads, Win32 shims, Glide and DirectDraw presentation
-src/platform/   Vita backend: gxm device and render thread, audio, input, sync, logging
-src/nfs3hp/     entry point, game hooks, native/ hand-written replacements (+ generated disassembly/)
-tools/          recompiler, generate, build, data staging and environment scripts
-```
+## License
+
+MIT (see [LICENSE](LICENSE)) for the port's own code. Code from nfs-recompiled and other third-party components are
+listed in [THIRD_PARTY.md](THIRD_PARTY.md).
+
+Unofficial, non-commercial fan port — not affiliated with or endorsed by Electronic Arts. *Need for Speed* is a
+trademark of Electronic Arts; you must own a legal copy to play.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- BADGES -->
+
+[release-shield]: https://img.shields.io/github/v/release/NDRWhun/NFS3VITA?include_prereleases&sort=semver&label=release&style=flat-square
+[release-url]: ../../releases
+[downloads-shield]: https://img.shields.io/github/downloads/NDRWhun/NFS3VITA/total?label=downloads&style=flat-square
+[downloads-url]: ../../releases
+[issues-shield]: https://img.shields.io/github/issues/NDRWhun/NFS3VITA?label=issues&style=flat-square
+[issues-url]: ../../issues
+[commit-shield]: https://img.shields.io/github/last-commit/NDRWhun/NFS3VITA?label=updated&style=flat-square
+[commit-url]: ../../commits/main
+[platform-shield]: https://img.shields.io/badge/platform-PS%20Vita-4b6cb7?style=flat-square
+[platform-url]: https://vitasdk.org
+[renderer-shield]: https://img.shields.io/badge/renderer-native%20sceGxm-8a4fff?style=flat-square
+[renderer-url]: src/platform/gxm
+[base-shield]: https://img.shields.io/badge/base-nfs--recompiled-555?style=flat-square
+[base-url]: https://github.com/motor-dev/nfs-recompiled
+[license-shield]: https://img.shields.io/badge/license-MIT-blue?style=flat-square
+[license-url]: LICENSE
