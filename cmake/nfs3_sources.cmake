@@ -71,6 +71,9 @@ set(NFS3_GAME_PORT_SOURCES
   src/nfs3hp/gamespeed.cpp
   src/nfs3hp/mastertimer.cpp
   src/nfs3hp/menulists.cpp
+  src/nfs3hp/native/clip.cpp
+  src/nfs3hp/native/memory.cpp
+  src/nfs3hp/native/transform.cpp
   src/nfs3hp/settings.cpp
   src/nfs3hp/widescreen.cpp
 )
