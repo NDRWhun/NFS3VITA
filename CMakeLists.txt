@@ -40,9 +40,10 @@ nfs3_add_shader(NFS3_SHADER_SOURCES blit_f  sce_fp_psp2)
 nfs3_add_shader(NFS3_SHADER_SOURCES clear_v sce_vp_psp2)
 nfs3_add_shader(NFS3_SHADER_SOURCES clear_f sce_fp_psp2)
 
-file(GLOB NFS3_DISASM_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/nfs3hp/disassembly/*.cpp")
+set(NFS3_GENERATED_DIR "${CMAKE_SOURCE_DIR}/src/nfs3hp/disassembly" CACHE PATH "Generated game code (tools/generate.ps1)")
+file(GLOB NFS3_DISASM_SOURCES CONFIGURE_DEPENDS "${NFS3_GENERATED_DIR}/*.cpp")
 if(NOT NFS3_DISASM_SOURCES)
-  message(FATAL_ERROR "src/nfs3hp/disassembly is empty; run tools/import-upstream.ps1 first.")
+  message(FATAL_ERROR "${NFS3_GENERATED_DIR} is empty; run tools/generate.ps1 (or tools/import-upstream.ps1) first.")
 endif()
 
 set(NFS3_COMMON_FLAGS
@@ -71,7 +72,7 @@ endif()
 set(NFS3_INCLUDES
   ${CMAKE_SOURCE_DIR}/include
   ${CMAKE_SOURCE_DIR}/src/nfs3hp
-  ${CMAKE_SOURCE_DIR}/src/nfs3hp/disassembly
+  ${NFS3_GENERATED_DIR}
 )
 
 # Generated game code: large, optimise for size and compile time.

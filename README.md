@@ -32,9 +32,14 @@ $env:VITA3K_EXE       = 'C:\Vita3K\Vita3K.exe'          # optional: tools/run-vi
 With PowerShell (Windows PowerShell 5.1 or PowerShell 7 on any OS):
 
 ```powershell
-tools/import-upstream.ps1 -Upstream <path-to-nfs-recompiled>
+tools/generate.ps1 -Binaries <dir>   # recompiles nfs3.exe + its DLLs with tools/recompiler
 tools/build.ps1            # -> build-release/NFS3VITA.vpk; rebuilds only what changed
 ```
+
+`tools/generate.ps1` needs Python 3 with `pip install -r tools/recompiler/requirements.txt` and a directory
+holding the original `nfs3.exe`, `eacsnd.dll`, `softtria.dll` and `voodoo2a.dll` (their SHA-256 is checked; the
+upstream repository's `nfs3hp/` folder has them). `tools/import-upstream.ps1 -Upstream <path-to-nfs-recompiled>`
+still imports upstream's pre-generated code instead.
 
 Or with CMake directly:
 

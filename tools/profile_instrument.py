@@ -12,7 +12,7 @@ import os
 import re
 import sys
 
-FUNCTION = re.compile(r'^(?:static )?void (?:\w+::)*sub_([0-9a-f]+)\((?:win32::)?WinApplication\* app, x86::CPU& cpu\)$')
+FUNCTION = re.compile(r'^(?:static )?void (?:\w+::)*sub_([0-9a-f]+)(?:_guest)?\((?:win32::)?WinApplication\* app, x86::CPU& cpu\)$')
 CALL = re.compile(r'^\s+(?:\w+::)*sub_[0-9a-f]+\(app, cpu\);$')
 TAIL_CALL = re.compile(r'^\s+return (?:\w+::)*sub_[0-9a-f]+\(app, cpu\);$')
 DYNAMIC = 'app->dynamic_call('
