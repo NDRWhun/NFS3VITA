@@ -5,19 +5,34 @@ static recompilation of *Need for Speed III: Hot Pursuit* (Win32, 1998). The rec
 code runs on a virtual x86 CPU; this repository replaces the SDL3/OpenGL runtime with a native
 Vita backend: libgxm rendering, SceAudioOut audio, SceCtrl input and SceKernel threads.
 
-## What is and is not here
+## Installing
 
-- Tracked: the runtime (`include/`, `src/lib`, `src/platform`), shaders, build glue.
-- Not tracked: the generated recompilation (`src/nfs3hp/disassembly/`, ~85 MB) and any game
-  binary or data. Import the generated code with `tools\import-upstream.ps1` from a clone of
-  the upstream repository at the commit pinned in `upstream.lock`.
-- You need your own copy of the game. Copy the installed game directory (including the
-  `fedata` and `gamedata` folders from the CD) to `ux0:data/nfs3vita/` on the Vita.
+The release VPK is built from the `nfs3.exe` of the [Modern Patch 1.6.1](https://gamebanana.com/mods/34590) by
+natko: races run natively at 960x544 with the patch's 16:9 HUD, menus and field-of-view options. The game data is
+not included; you need your own copy of the game and the Modern Patch 1.6.1 archive.
 
-## Playing with the Modern Patch 1.6.1 (recommended)
+1. Install `NFS3VITA.vpk` from the releases page with VitaShell.
+2. Copy the `fedata` and `gamedata` folders of your game (CD or installed game) to `ux0:data/nfs3vita/`.
+3. From the Modern Patch 1.6.1 archive, copy `nfs3.ini` and the `drivers`, `fedata` and `gamedata` folders to
+   `ux0:data/nfs3vita/`, overwriting the files from step 2.
+4. Start the game. Cross skips the intro.
 
-The port can be built from the `nfs3.exe` of the [Modern Patch 1.6.1](https://gamebanana.com/mods/34590) instead of
-the original: races run natively at 960x544 with the patch's 16:9 HUD, menus and field-of-view options. You need:
+Races start at 960x544. The 640x480 frontend menus and the loading screens are stretched to the full screen.
+Optional settings go in `ux0:data/nfs3vita/nfs3vita.cfg`, one `key=value` per line:
+
+| key | effect |
+|---|---|
+| `stretch=0` | menus and loading screens in 4:3 with side bars |
+| `resolution=WIDTHxHEIGHT` | another race resolution, for example `1024x768` (shown in 4:3) |
+
+## Building (optional)
+
+Only needed to build the VPK yourself. The generated recompilation (`src/nfs3hp/disassembly/`, ~85 MB) and any
+game binary or data are not tracked; the build generates the code from your own copy of the game files.
+
+### With the Modern Patch 1.6.1
+
+You need:
 
 - the Modern Patch 1.6.1, extracted (its `nfs3.exe` and data files);
 - from the original game: `voodoo2a.dll` and `softtria.dll` (the patch's own drivers use Glide 3, which the port
@@ -38,11 +53,13 @@ tools/stage-data.ps1 -Game <game> -ModernPatch <patch> -Out vita-data
 ```
 
 Install `build-release/NFS3VITA.vpk` with VitaShell and copy the contents of `vita-data` to `ux0:data/nfs3vita/`.
-Races start at 960x544 on the first run. The 640x480 frontend menus and the loading screens are stretched to the
-full screen; `stretch=0` in `ux0:data/nfs3vita/nfs3vita.cfg` shows them in 4:3 with side bars, and `resolution=WIDTHxHEIGHT`
-picks another race resolution (for example `1024x768`, shown in 4:3).
 
-## Building
+### With the original nfs3.exe
+
+The original `nfs3.exe` still builds: races then render at 1024x768 with the port's own widescreen (Hor+ world view,
+4:3 HUD). Copy the game's `fedata` and `gamedata` folders to `ux0:data/nfs3vita/`.
+
+### Build environment
 
 Requirements: [VitaSDK](https://vitasdk.org), CMake 3.16+, Ninja, and a clone of the upstream
 repository for the generated code. The shaders ship prebuilt in `shaders/gxp/`; the official PSP2
@@ -79,6 +96,11 @@ cmake --build build-release
 A full build compiles ~85 MB of generated C++ (a few minutes on a modern multi-core CPU); it only
 recurs when a header used by the generated code changes (`include/x86.h`, `cpu.h`, `fpu.h`,
 `mmx.h`, `lib/winapp.h`, `lib/memmap.h`, `lib/thread.h`). Other changes rebuild a few files.
+
+## Credits
+
+- [nfs-recompiled](https://github.com/motor-dev/nfs-recompiled): the static recompilation this port is based on.
+- [Modern Patch](https://gamebanana.com/mods/34590) by natko: widescreen HUD, menus and fixes of the release build.
 
 ## Layout
 
