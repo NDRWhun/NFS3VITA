@@ -1,26 +1,24 @@
 // Glide triangle vertex program.
-// Positions arrive in Glide screen pixels with z = ooz (0..65535).
+// Positions arrive in Glide screen pixels with z = ooz (0..65535). The clip-space w is 1/oow, so the hardware
+// interpolates the texture coordinates (and colours) perspective-correctly.
 
 void main(
     float3 aPosition,
     float4 aColor,
-    float2 aTexCoord,                       // sow, tow (0..256 over the texture)
-    float4 aCombine,                        // x: colour factor, y: alpha factor, w: oow
-    float4 aAtlasInfo,                      // y: texture size N, z,w: atlas offset in texels
+    float2 aTexCoord,                       // sow, tow (0..256 over the texture, times oow)
+    float3 aCombine,                        // x: colour factor, y: alpha factor, z: oow
     uniform float4 uViewport,               // x,y: NDC scale; z,w: NDC offset
     float4 out vPosition : POSITION,
-    float3 out vTexCoord : TEXCOORD2,       // texel position times oow, and oow
+    float2 out vTexCoord : TEXCOORD0,       // normalised texture coordinates
     half4  out vColor    : COLOR0,
-    half4  out vFactor   : TEXCOORD1,       // combine factors (colour, colour, colour, alpha)
-    float4 out vAtlasInfo: TEXCOORD0)       // N, 1/N, atlas offset
+    half4  out vFactor   : TEXCOORD1)       // combine factors (colour, colour, colour, alpha)
 {
-    float N = aAtlasInfo.y;
-    vTexCoord = float3(aTexCoord * (N * (1.0 / 256.0)), aCombine.w);
+    float w = 1.0 / aCombine.z;
+    vTexCoord = aTexCoord * (w * (1.0 / 256.0));
     vColor = aColor;
     vFactor = aCombine.xxxy;
-    vAtlasInfo = float4(N, 1.0 / N, aAtlasInfo.zw);
     vPosition = float4(aPosition.x * uViewport.x + uViewport.z,
                        aPosition.y * uViewport.y + uViewport.w,
                        aPosition.z * (1.0 / 65536.0),
-                       1.0);
+                       1.0) * w;
 }

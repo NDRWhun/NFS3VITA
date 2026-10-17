@@ -1,0 +1,14 @@
+// Glide triangle fragment program: one texture read (addressing, filtering and mipmaps from the descriptor),
+// combine, alpha test.
+
+float4 main(
+    float2 vTexCoord : TEXCOORD0,
+    half4  vColor    : COLOR0,
+    half4  vFactor   : TEXCOORD1,
+    uniform sampler2D uTexture) : COLOR
+{
+    half4 t = tex2D<half4>(uTexture, vTexCoord);
+    half4 color = vColor * (1.0h + vFactor * (t - 1.0h));      // lerp(colour, colour * texture, factor)
+    clip(color.a - 0.0625h);
+    return color;
+}

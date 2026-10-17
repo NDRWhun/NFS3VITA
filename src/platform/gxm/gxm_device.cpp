@@ -9,12 +9,12 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 // Embedded shader binaries (generated from shaders/*.cg).
 extern "C" {
 extern const unsigned char nfs3_shader_glide_v[];
-extern const unsigned char nfs3_shader_glide_clamp_f[];
-extern const unsigned char nfs3_shader_glide_wrap_f[];
+extern const unsigned char nfs3_shader_glide_f[];
 extern const unsigned char nfs3_shader_blit_v[];
 extern const unsigned char nfs3_shader_blit_f[];
 extern const unsigned char nfs3_shader_clear_v[];
@@ -32,7 +32,9 @@ const uint32_t PatcherBufferSize    = 64 * 1024;
 const uint32_t PatcherUsseSize      = 64 * 1024;
 const uint32_t FramebufferBytes     = MaxSourceWidth * MaxSourceHeight * 2;
 const uint32_t PaletteBytes         = 256 * 4;
+const uint32_t TexturePoolBytes     = 16 * 1024 * 1024;
 const uint32_t DialogRefreshMs      = 50;   // longest wait for a game frame while a system dialog is up
+const uint32_t GpuDoneGapUs         = 1000; // display callback started this long after the previous one returned
 const SceUID   InvalidUid           = -1;
 
 static bool s_framebufferBgr = false; // 565 texture swizzle for Vita3K, see Device::setFramebuffer16Bgr
@@ -125,13 +127,38 @@ void gpuUsseFree(SceUID uid, bool vertex)
 void* patcherHostAlloc(void*, SceSize size)   { return malloc(size); }
 void  patcherHostFree(void*, void* mem)       { free(mem); }
 
+// Display queue thread only: the last two callbacks' end times, the last start, and whether that start was
+// the GPU's completion time of its frame.
+uint32_t s_lastCallbackStart = 0;
+uint32_t s_lastCallbackEnd = 0;
+uint32_t s_secondLastCallbackEnd = 0;
+bool     s_lastStartWasGpuDone = false;
+
+uint32_t later(uint32_t a, uint32_t b)
+{
+    return int32_t(a - b) > 0 ? a : b;
+}
+
 void displayCallback(const void* data)
 {
     const DisplayData* display = static_cast<const DisplayData*>(data);
-    const bool timed = display->frameIndex && perf::enabled();
-    const uint32_t start = timed ? perf::now() : 0;
+    const bool perfOn = perf::enabled();
+    const bool timed = display->frameIndex && perfOn;
+    const uint32_t start = perfOn ? perf::now() : 0;
+    // The callback runs once the frame is rendered and the previous callback returned. Starting clearly after
+    // that return, it starts at the GPU's completion of the frame.
+    const bool startIsGpuDone = perfOn && int32_t(start - s_lastCallbackEnd) > int32_t(GpuDoneGapUs);
     if (timed)
+    {
         perf::add(perf::GpuLatency, start - display->endSceneTime);
+        if (startIsGpuDone && s_lastStartWasGpuDone)
+        {
+            // Scenes run in order. This one started at the latest of its submission, the previous scene's
+            // completion and the release of its colour buffer (the flip two callbacks back).
+            const uint32_t gpuStart = later(later(display->endSceneTime, s_lastCallbackStart), s_secondLastCallbackEnd);
+            perf::gpuBusy(start - gpuStart);
+        }
+    }
     SceDisplayFrameBuf frameBuffer;
     memset(&frameBuffer, 0, sizeof(frameBuffer));
     frameBuffer.size = sizeof(frameBuffer);
@@ -142,19 +169,50 @@ void displayCallback(const void* data)
     frameBuffer.height = DisplayHeight;
     sceDisplaySetFrameBuf(&frameBuffer, SCE_DISPLAY_SETBUF_NEXTFRAME);
     sceDisplayWaitVblankStartMulti(display->vblanks ? display->vblanks : 1);
-    if (timed)
-        perf::add(perf::FlipWait, perf::now() - start);
+    if (perfOn)
+    {
+        const uint32_t end = perf::now();
+        if (timed)
+            perf::add(perf::FlipWait, end - start);
+        s_lastCallbackStart = start;
+        s_secondLastCallbackEnd = s_lastCallbackEnd;
+        s_lastCallbackEnd = end;
+        s_lastStartWasGpuDone = startIsGpuDone;
+    }
     if (display->frameIndex)
         s_completedFrameIndex.store(display->frameIndex);
 }
 
-void initAtlasTexture(SceGxmTexture* texture, void* atlas, SceGxmTextureFilter filter)
+SceGxmTextureFormat gxmTextureFormat(TextureFormat format)
 {
-    sceGxmTextureInitLinear(texture, atlas, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR, AtlasSize, AtlasSize, 1);
-    sceGxmTextureSetMinFilter(texture, filter);
-    sceGxmTextureSetMagFilter(texture, filter);
-    sceGxmTextureSetUAddrMode(texture, SCE_GXM_TEXTURE_ADDR_CLAMP);
-    sceGxmTextureSetVAddrMode(texture, SCE_GXM_TEXTURE_ADDR_CLAMP);
+    switch (format)
+    {
+    case TextureRgb565:
+        return s_framebufferBgr ? SCE_GXM_TEXTURE_FORMAT_U5U6U5_BGR : SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB;
+    case TextureArgb1555:
+        return SCE_GXM_TEXTURE_FORMAT_U1U5U5U5_ARGB;
+    case TextureArgb4444:
+    default:
+        return SCE_GXM_TEXTURE_FORMAT_U4U4U4U4_ARGB;
+    }
+}
+
+// Bits 0, 2, 4, ... of a 16-bit value, packed.
+uint32_t evenBits(uint32_t value)
+{
+    value &= 0x5555;
+    value = (value | (value >> 1)) & 0x3333;
+    value = (value | (value >> 2)) & 0x0f0f;
+    value = (value | (value >> 4)) & 0x00ff;
+    return value;
+}
+
+// Copies a size² level from rows to the swizzled (Morton) layout: address bits interleave v (bit 0) and u.
+void swizzleLevel(uint16_t* out, const uint16_t* in, uint32_t size)
+{
+    const uint32_t count = size * size;
+    for (uint32_t i = 0; i < count; ++i)
+        out[i] = in[evenBits(i) * size + evenBits(i >> 1)];
 }
 
 unsigned int resourceIndex(const SceGxmProgram* program, const char* name)
@@ -166,6 +224,16 @@ unsigned int resourceIndex(const SceGxmProgram* program, const char* name)
 }
 
 }
+
+struct Texture
+{
+    SceGxmTexture   gxm;            // swizzled, all levels; filters and addressing are set per draw
+    uint32_t        offset;         // in the texture pool
+    uint32_t        bytes;
+    uint32_t        freedFrame;     // recording frame index when released
+    bool            memoryFreed;    // the pool range was reused before the frame completed
+    Texture*        next;           // quarantine list
+};
 
 struct Device::Impl
 {
@@ -199,11 +267,11 @@ struct Device::Impl
     SceUID                  patcherBufferUid = InvalidUid;
     SceUID                  patcherVertexUsseUid = InvalidUid;
     SceUID                  patcherFragmentUsseUid = InvalidUid;
-    SceGxmShaderPatcherId   glideVId = nullptr, glideWrapFId = nullptr, glideClampFId = nullptr;
+    SceGxmShaderPatcherId   glideVId = nullptr, glideFId = nullptr;
     SceGxmShaderPatcherId   blitVId = nullptr, blitFId = nullptr;
     SceGxmShaderPatcherId   clearVId = nullptr, clearFId = nullptr;
     SceGxmVertexProgram*    glideV = nullptr;
-    SceGxmFragmentProgram*  glideF[2][2] = {};  // [DrawCall::texClamp][DrawCall::alphaBlend]
+    SceGxmFragmentProgram*  glideF[2] = {};     // [DrawCall::alphaBlend]
     SceGxmVertexProgram*    blitV = nullptr;
     SceGxmFragmentProgram*  blitF = nullptr;
     SceGxmVertexProgram*    clearV = nullptr;
@@ -222,10 +290,16 @@ struct Device::Impl
     uint16_t*               triangleIndices = nullptr;
     SceUID                  triangleIndicesUid = InvalidUid;
 
-    // Atlas, as two descriptors of the same memory
-    SceUID                  atlasUid = InvalidUid;
-    SceGxmTexture           atlasPoint;             // nearest texel: wrapped and point-sampled draws
-    SceGxmTexture           atlasLinear;            // bilinear: clamped draws
+    // Texture memory (game thread): first-fit ranges of one CDRAM block. A released texture stays in quarantine
+    // until the frames recorded before its release completed.
+    struct Range
+    {
+        uint32_t offset, bytes;
+    };
+    SceUID                  texturePoolUid = InvalidUid;
+    uint8_t*                texturePool = nullptr;
+    std::vector<Range>      freeRanges;             // sorted by offset, never adjacent
+    Texture*                quarantine = nullptr;
 
     // Frame slots. A slot is handed back by the render thread once its scene is queued; the game thread then
     // waits for gpuPending before it writes the slot's buffers again.
@@ -259,12 +333,17 @@ struct Device::Impl
     bool initPrograms();
     bool initBuffers();
     void updateQuads();
+    bool allocateRange(uint32_t bytes, uint32_t* offset);
+    void freeRange(uint32_t offset, uint32_t bytes);
+    void releaseQuarantine(bool force);
+    uint32_t recordingFrameIndex() const;
 
     static int threadEntry(void* self);
     void run();
     void beginScene(SceGxmColorSurface* surface, SceGxmSyncObject* sync);
     void renderFrame(Frame& frame, Slot& slot);
     void setGlideMapping(const Rect& rect, float sourceWidth, float sourceHeight);
+    void setGlideTexture(const DrawCall& call);
     void renderDialogFrame();
     void drawQuad(uint32_t first, const SceGxmTexture* texture, SceGxmVertexProgram* vp, SceGxmFragmentProgram* fp, const float* color);
     void drawImage(void* image);
@@ -418,8 +497,7 @@ bool Device::Impl::initPrograms()
     struct ProgramEntry { const unsigned char* data; SceGxmShaderPatcherId* id; const char* name; };
     ProgramEntry entries[] = {
         { nfs3_shader_glide_v, &glideVId, "glide_v" },
-        { nfs3_shader_glide_wrap_f, &glideWrapFId, "glide_wrap_f" },
-        { nfs3_shader_glide_clamp_f, &glideClampFId, "glide_clamp_f" },
+        { nfs3_shader_glide_f, &glideFId, "glide_f" },
         { nfs3_shader_blit_v,  &blitVId,  "blit_v" },  { nfs3_shader_blit_f,  &blitFId,  "blit_f" },
         { nfs3_shader_clear_v, &clearVId, "clear_v" }, { nfs3_shader_clear_f, &clearFId, "clear_f" },
     };
@@ -441,22 +519,20 @@ bool Device::Impl::initPrograms()
     }
 
     const SceGxmProgram* glideVProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_glide_v);
-    const SceGxmProgram* glideWrapFProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_glide_wrap_f);
-    const SceGxmProgram* glideClampFProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_glide_clamp_f);
+    const SceGxmProgram* glideFProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_glide_f);
     const SceGxmProgram* blitVProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_blit_v);
     const SceGxmProgram* blitFProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_blit_f);
     const SceGxmProgram* clearVProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_clear_v);
     const SceGxmProgram* clearFProgram = reinterpret_cast<const SceGxmProgram*>(nfs3_shader_clear_f);
 
     // Glide vertex layout mirrors pf::gxm::Vertex.
-    SceGxmVertexAttribute glideAttributes[5];
+    SceGxmVertexAttribute glideAttributes[4];
     glideAttributes[0] = { 0, 0,  SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, uint16_t(resourceIndex(glideVProgram, "aPosition")) };
     glideAttributes[1] = { 0, 12, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4, uint16_t(resourceIndex(glideVProgram, "aColor")) };
     glideAttributes[2] = { 0, 16, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, uint16_t(resourceIndex(glideVProgram, "aTexCoord")) };
-    glideAttributes[3] = { 0, 24, SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, uint16_t(resourceIndex(glideVProgram, "aCombine")) };
-    glideAttributes[4] = { 0, 40, SCE_GXM_ATTRIBUTE_FORMAT_F32, 4, uint16_t(resourceIndex(glideVProgram, "aAtlasInfo")) };
+    glideAttributes[3] = { 0, 24, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, uint16_t(resourceIndex(glideVProgram, "aCombine")) };
     SceGxmVertexStream glideStream = { sizeof(Vertex), SCE_GXM_INDEX_SOURCE_INDEX_16BIT };
-    result = sceGxmShaderPatcherCreateVertexProgram(patcher, glideVId, glideAttributes, 5, &glideStream, 1, &glideV);
+    result = sceGxmShaderPatcherCreateVertexProgram(patcher, glideVId, glideAttributes, 4, &glideStream, 1, &glideV);
     if (result < 0)
     {
         logError("glide vertex program creation failed: 0x%08x", result);
@@ -472,29 +548,19 @@ bool Device::Impl::initPrograms()
     blend.colorDst = SCE_GXM_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     blend.alphaSrc = SCE_GXM_BLEND_FACTOR_ONE;
     blend.alphaDst = SCE_GXM_BLEND_FACTOR_ZERO;
-    const SceGxmShaderPatcherId glideFIds[2] = { glideWrapFId, glideClampFId };
-    for (int clamp = 0; clamp < 2; ++clamp)
+    for (int alphaBlend = 0; alphaBlend < 2; ++alphaBlend)
     {
-        for (int alphaBlend = 0; alphaBlend < 2; ++alphaBlend)
+        blend.colorDst = alphaBlend ? SCE_GXM_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : SCE_GXM_BLEND_FACTOR_ONE;
+        result = sceGxmShaderPatcherCreateFragmentProgram(patcher, glideFId, SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4,
+                                                          SCE_GXM_MULTISAMPLE_NONE, &blend, glideVProgram, &glideF[alphaBlend]);
+        if (result < 0)
         {
-            blend.colorDst = alphaBlend ? SCE_GXM_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA : SCE_GXM_BLEND_FACTOR_ONE;
-            result = sceGxmShaderPatcherCreateFragmentProgram(patcher, glideFIds[clamp], SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4,
-                                                              SCE_GXM_MULTISAMPLE_NONE, &blend, glideVProgram,
-                                                              &glideF[clamp][alphaBlend]);
-            if (result < 0)
-            {
-                logError("glide fragment program creation failed (clamp %d, blend %d): 0x%08x", clamp, alphaBlend, result);
-                return false;
-            }
+            logError("glide fragment program creation failed (blend %d): 0x%08x", alphaBlend, result);
+            return false;
         }
     }
     glideViewportParam = sceGxmProgramFindParameterByName(glideVProgram, "uViewport");
-    glideTextureUnit = resourceIndex(glideWrapFProgram, "uTexture");
-    if (resourceIndex(glideClampFProgram, "uTexture") != glideTextureUnit)
-    {
-        logError("glide fragment programs use different texture units");
-        return false;
-    }
+    glideTextureUnit = resourceIndex(glideFProgram, "uTexture");
 
     SceGxmVertexAttribute quadAttributes[2];
     quadAttributes[0] = { 0, 0, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, uint16_t(resourceIndex(blitVProgram, "aPosition")) };
@@ -633,6 +699,7 @@ void Device::Impl::run()
         const uint32_t start = timed ? perf::now() : 0;
         const uint32_t drawCalls = uint32_t(frame.drawCalls.size());
         const uint32_t triangles = frame.vertexCount / 3;
+        const uint32_t opaqueTriangles = frame.opaqueTriangles;
         renderFrame(frame, slots[renderSlot]);
         const uint32_t end = timed ? perf::now() : 0;
         renderSlot = (renderSlot + 1) % FrameSlots;
@@ -640,7 +707,7 @@ void Device::Impl::run()
         if (timed)
         {
             perf::add(perf::Render, end - start);
-            perf::framePresented(drawCalls, triangles);
+            perf::framePresented(drawCalls, triangles, opaqueTriangles);
         }
     }
 }
@@ -763,7 +830,6 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
             sceGxmSetVertexStream(context, 0, frame.vertices);
             Mapping mapping = frame.drawCalls.empty() ? MapBox : frame.drawCalls.front().mapping;
             setGlideMapping(mapping == MapFull ? full : viewport, sw, sh);
-            const SceGxmTexture* atlas = nullptr;
 
             uint32_t first = 0;
             for (const DrawCall& call : frame.drawCalls)
@@ -776,16 +842,10 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
                         mapping = call.mapping;
                         setGlideMapping(mapping == MapFull ? full : viewport, sw, sh);
                     }
-                    // glide_clamp_f filters through the descriptor; glide_wrap_f filters itself from nearest texels.
-                    const SceGxmTexture* callAtlas = call.texClamp && !call.texPoint ? &atlasLinear : &atlasPoint;
-                    if (callAtlas != atlas)
-                    {
-                        atlas = callAtlas;
-                        sceGxmSetFragmentTexture(context, glideTextureUnit, atlas);
-                    }
+                    setGlideTexture(call);
                     sceGxmSetFrontDepthFunc(context, call.zTest ? SCE_GXM_DEPTH_FUNC_LESS_EQUAL : SCE_GXM_DEPTH_FUNC_ALWAYS);
                     sceGxmSetFrontDepthWriteEnable(context, call.zWrite ? SCE_GXM_DEPTH_WRITE_ENABLED : SCE_GXM_DEPTH_WRITE_DISABLED);
-                    sceGxmSetFragmentProgram(context, glideF[call.texClamp][call.alphaBlend]);
+                    sceGxmSetFragmentProgram(context, glideF[call.alphaBlend]);
                     sceGxmDraw(context, SCE_GXM_PRIMITIVE_TRIANGLES, SCE_GXM_INDEX_FORMAT_U16, triangleIndices + first, count);
                 }
                 first = call.lastVertex;
@@ -817,6 +877,23 @@ void Device::Impl::setGlideMapping(const Rect& rect, float sourceWidth, float so
     sceGxmReserveVertexDefaultUniformBuffer(context, &uniforms);
     sceGxmSetUniformDataF(uniforms, glideViewportParam, 0, 4, viewportUniform);
     sceGxmSetRegionClip(context, SCE_GXM_REGION_CLIP_OUTSIDE, rect.x, rect.y, rect.x + rect.w - 1, rect.y + rect.h - 1);
+}
+
+// Binds the call's texture with its addressing, filtering and mipmap use.
+void Device::Impl::setGlideTexture(const DrawCall& call)
+{
+    SceGxmTexture texture = call.texture->gxm;
+    const SceGxmTextureFilter filter = call.texPoint ? SCE_GXM_TEXTURE_FILTER_POINT : SCE_GXM_TEXTURE_FILTER_LINEAR;
+    sceGxmTextureSetMinFilter(&texture, filter);
+    sceGxmTextureSetMagFilter(&texture, filter);
+    const SceGxmTextureAddrMode addrMode = call.texClamp ? SCE_GXM_TEXTURE_ADDR_CLAMP : SCE_GXM_TEXTURE_ADDR_REPEAT;
+    sceGxmTextureSetUAddrMode(&texture, addrMode);
+    sceGxmTextureSetVAddrMode(&texture, addrMode);
+    if (call.mipMode == MipNone)
+        sceGxmTextureSetMipmapCount(&texture, 1);
+    sceGxmTextureSetMipFilter(&texture, call.mipMode == MipBlend ? SCE_GXM_TEXTURE_MIP_FILTER_ENABLED
+                                                                 : SCE_GXM_TEXTURE_MIP_FILTER_DISABLED);
+    sceGxmSetFragmentTexture(context, glideTextureUnit, &texture);
 }
 
 // Re-presents the last image so a system dialog keeps updating while no game frame arrives.
@@ -869,7 +946,6 @@ Device& Device::get()
 
 Device::Device()
     :   m_impl(nullptr)
-    ,   m_atlas(nullptr)
     ,   m_stretch(false)
 {
 }
@@ -887,10 +963,10 @@ bool Device::init()
     if (!m_impl->initCore() || !m_impl->initDisplay() || !m_impl->initPrograms() || !m_impl->initBuffers())
         return false;
 
-    m_atlas = static_cast<uint32_t*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, AtlasSize * AtlasSize * 4,
-                                              SCE_GXM_TEXTURE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_READ, &m_impl->atlasUid));
-    initAtlasTexture(&m_impl->atlasPoint, m_atlas, SCE_GXM_TEXTURE_FILTER_POINT);
-    initAtlasTexture(&m_impl->atlasLinear, m_atlas, SCE_GXM_TEXTURE_FILTER_LINEAR);
+    m_impl->texturePool = static_cast<uint8_t*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, TexturePoolBytes,
+                                                         SCE_GXM_TEXTURE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_READ,
+                                                         &m_impl->texturePoolUid));
+    m_impl->freeRanges.push_back(Impl::Range{ 0, TexturePoolBytes });
 
     m_impl->running = true;
     m_impl->thread = new Thread("nfs3_render", &Impl::threadEntry, m_impl, Thread::PriorityHigh, 256 * 1024, Thread::CpuAll);
@@ -922,14 +998,13 @@ void Device::shutdown()
     if (impl.patcher)
     {
         if (impl.glideV) sceGxmShaderPatcherReleaseVertexProgram(impl.patcher, impl.glideV);
-        for (auto& programs : impl.glideF)
-            for (SceGxmFragmentProgram* program : programs)
-                if (program) sceGxmShaderPatcherReleaseFragmentProgram(impl.patcher, program);
+        for (SceGxmFragmentProgram* program : impl.glideF)
+            if (program) sceGxmShaderPatcherReleaseFragmentProgram(impl.patcher, program);
         if (impl.blitV) sceGxmShaderPatcherReleaseVertexProgram(impl.patcher, impl.blitV);
         if (impl.blitF) sceGxmShaderPatcherReleaseFragmentProgram(impl.patcher, impl.blitF);
         if (impl.clearV) sceGxmShaderPatcherReleaseVertexProgram(impl.patcher, impl.clearV);
         if (impl.clearF) sceGxmShaderPatcherReleaseFragmentProgram(impl.patcher, impl.clearF);
-        SceGxmShaderPatcherId ids[] = { impl.glideVId, impl.glideWrapFId, impl.glideClampFId, impl.blitVId, impl.blitFId,
+        SceGxmShaderPatcherId ids[] = { impl.glideVId, impl.glideFId, impl.blitVId, impl.blitFId,
                                         impl.clearVId, impl.clearFId };
         for (SceGxmShaderPatcherId id : ids)
             if (id) sceGxmShaderPatcherUnregisterProgram(impl.patcher, id);
@@ -944,7 +1019,12 @@ void Device::shutdown()
         gpuFree(slot.framebufferUid);
         gpuFree(slot.paletteUid);
     }
-    gpuFree(impl.atlasUid);
+    while (Texture* texture = impl.quarantine)
+    {
+        impl.quarantine = texture->next;
+        delete texture;
+    }
+    gpuFree(impl.texturePoolUid);
     gpuFree(impl.quadVerticesUid);
     gpuFree(impl.quadIndicesUid);
     gpuFree(impl.triangleIndicesUid);
@@ -965,7 +1045,6 @@ void Device::shutdown()
     sceGxmTerminate();
     delete m_impl;
     m_impl = nullptr;
-    m_atlas = nullptr;
 }
 
 Frame& Device::acquireFrame()
@@ -999,6 +1078,7 @@ Frame& Device::acquireFrame()
         frame.clearColor = 0;
         frame.wide = false;
         frame.vertexCount = 0;
+        frame.opaqueTriangles = 0;
         frame.drawCalls.clear();
         impl.frameAcquired = true;
     }
@@ -1022,11 +1102,6 @@ void Device::submitFrame()
     impl.readySlots.post();
 }
 
-uint32_t Device::completedFrameIndex() const
-{
-    return s_completedFrameIndex.load();
-}
-
 uint32_t Device::submittedFrameCount() const
 {
     return s_submittedFrames.load();
@@ -1037,10 +1112,126 @@ void Device::setFramebuffer16Bgr(bool bgr)
     s_framebufferBgr = bgr;
 }
 
-uint32_t Device::recordingFrameIndex() const
+uint32_t Device::Impl::recordingFrameIndex() const
+{
+    return frameAcquired ? frames[acquireSlot].frameIndex : nextFrameIndex;
+}
+
+bool Device::Impl::allocateRange(uint32_t bytes, uint32_t* offset)
+{
+    for (size_t i = 0; i < freeRanges.size(); ++i)
+    {
+        Range& range = freeRanges[i];
+        if (range.bytes < bytes)
+            continue;
+        *offset = range.offset;
+        range.offset += bytes;
+        range.bytes -= bytes;
+        if (!range.bytes)
+            freeRanges.erase(freeRanges.begin() + i);
+        return true;
+    }
+    return false;
+}
+
+void Device::Impl::freeRange(uint32_t offset, uint32_t bytes)
+{
+    size_t i = 0;
+    while (i < freeRanges.size() && freeRanges[i].offset < offset)
+        ++i;
+    const bool joinsPrevious = i > 0 && freeRanges[i - 1].offset + freeRanges[i - 1].bytes == offset;
+    const bool joinsNext = i < freeRanges.size() && offset + bytes == freeRanges[i].offset;
+    if (joinsPrevious && joinsNext)
+    {
+        freeRanges[i - 1].bytes += bytes + freeRanges[i].bytes;
+        freeRanges.erase(freeRanges.begin() + i);
+    }
+    else if (joinsPrevious)
+    {
+        freeRanges[i - 1].bytes += bytes;
+    }
+    else if (joinsNext)
+    {
+        freeRanges[i].offset = offset;
+        freeRanges[i].bytes += bytes;
+    }
+    else
+    {
+        freeRanges.insert(freeRanges.begin() + i, Range{ offset, bytes });
+    }
+}
+
+// Frees quarantined textures whose frames completed. With force, also hands out the memory of the others; their
+// objects stay until their frames completed, because recorded draw calls still point to them.
+void Device::Impl::releaseQuarantine(bool force)
+{
+    const uint32_t completed = s_completedFrameIndex.load();
+    Texture** link = &quarantine;
+    while (Texture* texture = *link)
+    {
+        const bool done = int32_t(completed - texture->freedFrame) >= 0;
+        if ((done || force) && !texture->memoryFreed)
+        {
+            freeRange(texture->offset, texture->bytes);
+            texture->memoryFreed = true;
+        }
+        if (done)
+        {
+            *link = texture->next;
+            delete texture;
+        }
+        else
+        {
+            link = &texture->next;
+        }
+    }
+}
+
+Texture* Device::createTexture(TextureFormat format, uint32_t size, uint32_t levels, const uint16_t* texels)
 {
     Impl& impl = *m_impl;
-    return impl.frameAcquired ? impl.frames[impl.acquireSlot].frameIndex : impl.nextFrameIndex;
+    uint32_t texelCount = 0;
+    for (uint32_t level = 0; level < levels; ++level)
+        texelCount += (size >> level) * (size >> level);
+    const uint32_t bytes = alignUp(texelCount * 2, SCE_GXM_TEXTURE_ALIGNMENT);
+    uint32_t offset = 0;
+    impl.releaseQuarantine(false);
+    if (!impl.allocateRange(bytes, &offset))
+    {
+        logError("texture memory full: reusing released textures that frames in flight may still read");
+        impl.releaseQuarantine(true);
+        if (!impl.allocateRange(bytes, &offset))
+            fatal("texture memory exhausted (%u bytes requested)", bytes);
+    }
+
+    uint16_t* data = reinterpret_cast<uint16_t*>(impl.texturePool + offset);
+    uint16_t* out = data;
+    for (uint32_t level = 0; level < levels; ++level)
+    {
+        const uint32_t levelSize = size >> level;
+        swizzleLevel(out, texels, levelSize);
+        out += levelSize * levelSize;
+        texels += levelSize * levelSize;
+    }
+
+    Texture* texture = new Texture();
+    texture->offset = offset;
+    texture->bytes = bytes;
+    texture->freedFrame = 0;
+    texture->memoryFreed = false;
+    texture->next = nullptr;
+    const int result = sceGxmTextureInitSwizzled(&texture->gxm, data, gxmTextureFormat(format), size, size, levels);
+    if (result < 0)
+        fatal("sceGxmTextureInitSwizzled(%u, %u levels) failed: 0x%08x", size, levels, result);
+    return texture;
+}
+
+void Device::releaseTexture(Texture* texture)
+{
+    Impl& impl = *m_impl;
+    texture->freedFrame = impl.recordingFrameIndex();
+    texture->next = impl.quarantine;
+    impl.quarantine = texture;
 }
 
 Rect Device::viewport() const

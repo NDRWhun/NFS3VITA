@@ -11,21 +11,38 @@ enum
     DisplayWidth    = 960,
     DisplayHeight   = 544,
     MaxVertices     = 32000,
-    AtlasSize       = 2048,
     MaxSourceWidth  = 1024,     // largest Glide resolution (grSstWinOpen)
     MaxSourceHeight = 768,
     FrameSlots      = 3
 };
 
-// Glide triangle vertex as consumed by glide_v.cg (56 bytes); glide_v does not read the reserved words.
+// Glide triangle vertex as consumed by glide_v.cg (36 bytes).
 struct Vertex
 {
-    float       x, y, z;
+    float       x, y, z;        // Glide screen position, z = ooz
     uint32_t    color;
-    float       u, v;
-    float       colorCombine, alphaCombine, reserved0, oow;
-    float       reserved1, width, offX, offY;
+    float       sow, tow;       // texture coordinates (0..256 over the texture) times oow
+    float       colorCombine, alphaCombine, oow;
 };
+
+// Texel layout of a Glide texture, 16 bits per texel.
+enum TextureFormat : uint8_t
+{
+    TextureRgb565,
+    TextureArgb1555,
+    TextureArgb4444
+};
+
+// Mipmap use of a draw (grTexMipMapMode).
+enum MipMode : uint8_t
+{
+    MipNone,        // the largest level only
+    MipNearest,     // the nearest level
+    MipBlend        // blend between the two nearest levels
+};
+
+// A GPU texture created by Device::createTexture; opaque outside the device.
+struct Texture;
 
 // Display area that Glide screen coordinates (0..sourceWidth, 0..sourceHeight) are mapped to.
 enum Mapping : uint8_t
@@ -42,7 +59,9 @@ struct DrawCall
     bool        alphaBlend;
     Mapping     mapping;
     bool        texClamp;       // texture coordinates clamp to the edge texels (else they wrap)
-    bool        texPoint;       // clamped textures use the nearest texel (else bilinear filtering)
+    bool        texPoint;       // nearest texel (else bilinear filtering)
+    MipMode     mipMode;
+    const Texture* texture;
 };
 
 enum FrameKind
@@ -65,6 +84,7 @@ struct Frame
     uint32_t                clearColor;     // 0x00RRGGBB
     bool                    wide;           // a draw call uses MapFull
     uint32_t                vertexCount;
+    uint32_t                opaqueTriangles;    // triangles that blend with 1-src-alpha at alpha 1 everywhere
     std::vector<DrawCall>   drawCalls;
     // GPU-visible buffers owned by the device, valid while the frame is acquired.
     Vertex*                 vertices;
@@ -92,9 +112,12 @@ public:
     Frame* currentFrame();
     void submitFrame();
 
-    uint32_t* atlas() const { return m_atlas; }
-    uint32_t completedFrameIndex() const;
-    uint32_t recordingFrameIndex() const;
+    // Game thread: a square texture of size² texels with levels mip levels. texels holds the levels in Glide
+    // order (largest first, rows top to bottom, 16 bits per texel). When texture memory is full it reuses
+    // released textures that frames in flight may still read (logged); fatal if that is not enough either.
+    Texture* createTexture(TextureFormat format, uint32_t size, uint32_t levels, const uint16_t* texels);
+    // Game thread: frees the texture once the GPU has finished every frame recorded so far.
+    void releaseTexture(Texture* texture);
     // Frames submitted so far; readable from any thread.
     uint32_t submittedFrameCount() const;
 
@@ -111,7 +134,6 @@ private:
 
     struct Impl;
     Impl*       m_impl;
-    uint32_t*   m_atlas;
     bool        m_stretch;
 };
 

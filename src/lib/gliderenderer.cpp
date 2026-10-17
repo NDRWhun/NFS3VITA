@@ -1,6 +1,5 @@
 #include <lib/gliderenderer.h>
 #include <lib/renderer.h>
-#include <lib/glidetmu.h>
 #include <lib/inputscript.h>
 #include <platform/gxm.h>
 #include <platform/log.h>
@@ -10,8 +9,10 @@
 namespace win32
 {
 
-static const x86::reg32 s_atlasSize = pf::gxm::AtlasSize;
 static GlideRenderer* s_active = nullptr;
+// Glide texture memory taken per texture; textures are addressed by index (address / this).
+static const x86::reg32 s_textureHandleSize = 4;
+static const x86::reg32 s_maxTextures = 65536;
 
 void GlideRenderer::endActiveFrame()
 {
@@ -32,17 +33,18 @@ GlideRenderer::GlideRenderer(Renderer* renderer)
     :   m_renderer(renderer)
     ,   m_frame(nullptr)
     ,   m_flushedVertices(0)
-    ,   m_vertexState{ 1.f, 1.f, 256.f, 0.f, 0.f }
+    ,   m_vertexState{ 1.f, 1.f }
     ,   m_zBuffer(true)
     ,   m_zTest(true)
     ,   m_alphaBlend(true)
     ,   m_mapping(pf::gxm::MapBox)
     ,   m_texClamp(false)
     ,   m_texPoint(false)
+    ,   m_mipMode(pf::gxm::MipNone)
     ,   m_textureAddress(0)
+    ,   m_texture(nullptr)
+    ,   m_textureOpaque(false)
 {
-    m_tmus[0] = new GlideTMU(s_atlasSize);
-    m_tmus[1] = nullptr;
     s_active = this;
 }
 
@@ -53,7 +55,12 @@ GlideRenderer::~GlideRenderer()
         flush();
         s_active = nullptr;
     }
-    delete m_tmus[0];
+    pf::gxm::Device& device = pf::gxm::Device::get();
+    for (TextureEntry& entry : m_textures)
+    {
+        if (entry.texture)
+            device.releaseTexture(entry.texture);
+    }
 }
 
 // The frame currently being recorded.
@@ -108,6 +115,8 @@ void GlideRenderer::flush()
     call.mapping = m_mapping;
     call.texClamp = m_texClamp;
     call.texPoint = m_texPoint;
+    call.mipMode = m_mipMode;
+    call.texture = m_texture;
     f->drawCalls.push_back(call);
     if (m_mapping == pf::gxm::MapFull)
         f->wide = true;
@@ -123,19 +132,9 @@ void GlideRenderer::swap()
     m_renderer->present();
 }
 
-x86::reg32 GlideRenderer::textureMemStart(x86::reg32 tmu)
-{
-    return m_tmus[tmu]->textureMemStart() + sizeof(GlTextureSlot*);
-}
-
-x86::reg32 GlideRenderer::textureMemEnd(x86::reg32 tmu)
-{
-    return m_tmus[tmu]->textureMemEnd();
-}
-
 x86::reg32 GlideRenderer::getTextureMemSize(x86::reg32 /*largeMipmapSize*/, x86::reg32 /*smallMipmapSize*/, TextureFormat /*format*/)
 {
-    return sizeof(GlTextureSlot*);
+    return s_textureHandleSize;
 }
 
 void GlideRenderer::setZWrite(bool enable)
@@ -183,6 +182,15 @@ void GlideRenderer::setTexPoint(bool point)
     }
 }
 
+void GlideRenderer::setMipMode(pf::gxm::MipMode mode)
+{
+    if (mode != m_mipMode)
+    {
+        flush();
+        m_mipMode = mode;
+    }
+}
+
 void GlideRenderer::setAlphaBlendDst(AlphaBlend method)
 {
     if (m_alphaBlend != (method == AB_1mSrcAlpha))
@@ -202,83 +210,109 @@ void GlideRenderer::setAlphaFactor(float alphaFactor)
     m_vertexState.alphaCombine = alphaFactor;
 }
 
-void GlideRenderer::setTexture(x86::reg32 tmu, x86::reg32 address)
+// The entry of a Glide texture address, created if asked; null if there is none or the address is out of range.
+GlideRenderer::TextureEntry* GlideRenderer::textureEntry(x86::reg32 address, bool create)
+{
+    const x86::reg32 index = address / s_textureHandleSize;
+    if (index >= m_textures.size())
+    {
+        if (!create || index >= s_maxTextures)
+            return nullptr;
+        m_textures.resize(index + 1, TextureEntry{ nullptr, 0, 0, false });
+    }
+    return &m_textures[index];
+}
+
+// Samples the following triangles from the entry's texture.
+void GlideRenderer::bindTexture(const TextureEntry& entry)
+{
+    if (entry.texture != m_texture)
+    {
+        flush();
+        m_texture = entry.texture;
+    }
+    m_textureOpaque = entry.opaque;
+}
+
+void GlideRenderer::setTexture(x86::reg32 tmu, x86::reg32 address, x86::reg32 largeLod, x86::reg32 smallLod)
 {
     NFS2_ASSERT(tmu == 0);
     m_textureAddress = address;
-    GlTextureSlot** info = m_tmus[tmu]->getTextureInfo(address);
-    if (!*info)
+    const TextureEntry* entry = textureEntry(address, false);
+    if (!entry || !entry->texture)
     {
         pf::logError("texture at 0x%x used before download", address);
         return;
     }
-    useTextureSlot(*info);
-}
-
-// Samples the following triangles from the slot.
-void GlideRenderer::useTextureSlot(const GlTextureSlot* slot)
-{
-    m_vertexState.width = float(x86::reg32(256) >> slot->lod);
-    m_vertexState.offX = float(slot->x);
-    m_vertexState.offY = float(slot->y);
-}
-
-// Converts the largest mip level into the atlas as ABGR words.
-void GlideRenderer::setTextureData(x86::reg32 tmu, x86::reg32 address, const void* data,
-                                   x86::reg32 largeMipmap, x86::reg32 smallMipmap, TextureFormat format)
-{
-    NFS2_USE(smallMipmap);
-    NFS2_ASSERT(tmu == 0);
-    x86::reg32 size = 256 >> largeMipmap;
-
-    pf::gxm::Device& device = pf::gxm::Device::get();
-    GlTextureSlot** info = m_tmus[tmu]->getTextureInfo(address);
-    if (*info)
+    static bool logged = false;
+    if (!logged && (largeLod != entry->largeLod || smallLod != entry->smallLod))
     {
-        m_tmus[tmu]->returnTextureSlot(*info, device.recordingFrameIndex());
+        logged = true;
+        pf::logInfo("glide: texture at 0x%x sourced with levels %u..%u, downloaded with %u..%u (using the download)",
+                    address, unsigned(largeLod), unsigned(smallLod), unsigned(entry->largeLod), unsigned(entry->smallLod));
     }
-    *info = m_tmus[tmu]->reserveTextureSlot(largeMipmap, device.completedFrameIndex());
-    // A bound texture that is downloaded again moves to the new slot.
-    if (address == m_textureAddress)
-        useTextureSlot(*info);
+    bindTexture(*entry);
+}
 
-    const x86::reg16* pixels = reinterpret_cast<const x86::reg16*>(data);
-    uint32_t* atlas = device.atlas() + (*info)->y * s_atlasSize + (*info)->x;
-    for (x86::reg32 y = 0; y < size; ++y, atlas += s_atlasSize, pixels += size)
+// Copies all downloaded mip levels into a new GPU texture; the previous texture at the address is released.
+void GlideRenderer::setTextureData(x86::reg32 tmu, x86::reg32 address, const void* data,
+                                   x86::reg32 largeLod, x86::reg32 smallLod, TextureFormat format)
+{
+    NFS2_ASSERT(tmu == 0);
+    NFS2_ASSERT(largeLod <= smallLod && smallLod <= 8);
+    const x86::reg32 size = 256 >> largeLod;
+    const x86::reg32 levels = smallLod - largeLod + 1;
+    const x86::reg16* texels = static_cast<const x86::reg16*>(data);
+
+    bool opaque = true;
+    if (format != TF_RGB_565)
     {
-        for (x86::reg32 x = 0; x < size; ++x)
+        const x86::reg16 alphaMask = format == TF_ARGB_1555 ? 0x8000 : 0xf000;
+        x86::reg32 count = 0;
+        for (x86::reg32 level = 0; level < levels; ++level)
+            count += (size >> level) * (size >> level);
+        for (x86::reg32 i = 0; i < count && opaque; ++i)
+            opaque = (texels[i] & alphaMask) == alphaMask;
+    }
+    if (levels > 1)
+    {
+        static bool logged = false;
+        if (!logged)
         {
-            x86::reg16 p = pixels[x];
-            x86::reg32 r, g, b, a;
-            switch (format)
-            {
-            case TF_RGB_565:
-                r = (p >> 11) & 0x1f; r = (r << 3) | (r >> 2);
-                g = (p >> 5) & 0x3f;  g = (g << 2) | (g >> 4);
-                b = p & 0x1f;         b = (b << 3) | (b >> 2);
-                a = 0xff;
-                break;
-            case TF_ARGB_1555:
-                r = (p >> 10) & 0x1f; r = (r << 3) | (r >> 2);
-                g = (p >> 5) & 0x1f;  g = (g << 3) | (g >> 2);
-                b = p & 0x1f;         b = (b << 3) | (b >> 2);
-                a = (p & 0x8000) ? 0xff : 0x00;
-                break;
-            case TF_ARGB_4444:
-            default:
-                r = (p >> 8) & 0xf;  r |= r << 4;
-                g = (p >> 4) & 0xf;  g |= g << 4;
-                b = p & 0xf;         b |= b << 4;
-                a = (p >> 12) & 0xf; a |= a << 4;
-                break;
-            }
-            atlas[x] = (a << 24) | (b << 16) | (g << 8) | r;
+            logged = true;
+            pf::logInfo("glide: first texture with mip levels: %u² with %u levels", unsigned(size), unsigned(levels));
         }
     }
+
+    pf::gxm::TextureFormat gxmFormat = pf::gxm::TextureArgb4444;
+    if (format == TF_RGB_565)
+        gxmFormat = pf::gxm::TextureRgb565;
+    else if (format == TF_ARGB_1555)
+        gxmFormat = pf::gxm::TextureArgb1555;
+
+    pf::gxm::Device& device = pf::gxm::Device::get();
+    TextureEntry* entry = textureEntry(address, true);
+    if (!entry)
+    {
+        pf::logError("texture address 0x%x out of range, download ignored", address);
+        return;
+    }
+    const bool bound = address == m_textureAddress;
+    if (bound)
+        flush();
+    if (entry->texture)
+        device.releaseTexture(entry->texture);
+    entry->texture = device.createTexture(gxmFormat, size, levels, texels);
+    entry->largeLod = largeLod;
+    entry->smallLod = smallLod;
+    entry->opaque = opaque;
+    // A bound texture that is downloaded again is drawn from its new data.
+    if (bound)
+        bindTexture(*entry);
 }
 
-static_assert(sizeof(pf::gxm::Vertex) == 14 * sizeof(x86::reg32) && offsetof(pf::gxm::Vertex, color) == 12 &&
-              offsetof(pf::gxm::Vertex, oow) == 36 && offsetof(pf::gxm::Vertex, offY) == 52, "vertex word layout");
+static_assert(sizeof(pf::gxm::Vertex) == 9 * sizeof(x86::reg32) && offsetof(pf::gxm::Vertex, color) == 12 &&
+              offsetof(pf::gxm::Vertex, sow) == 16 && offsetof(pf::gxm::Vertex, oow) == 32, "vertex word layout");
 
 static inline x86::reg32 word(float value)
 {
@@ -287,7 +321,13 @@ static inline x86::reg32 word(float value)
     return result;
 }
 
-// Stores one vertex as 14 words in address order; the vertex buffer is uncached GPU memory.
+// The alpha byte writeVertex stores.
+static inline x86::reg32 vertexAlpha(const GrVertex* v)
+{
+    return x86::reg32(v->a) & 0xff;
+}
+
+// Stores one vertex as 9 words in address order; the vertex buffer is uncached GPU memory.
 void GlideRenderer::writeVertex(pf::gxm::Vertex* vertex, const GrVertex* v, const VertexState& state)
 {
     volatile x86::reg32* out = reinterpret_cast<volatile x86::reg32*>(vertex);
@@ -302,12 +342,7 @@ void GlideRenderer::writeVertex(pf::gxm::Vertex* vertex, const GrVertex* v, cons
     out[5] = word(v->tmuvtx[0].tow);
     out[6] = word(state.colorCombine);
     out[7] = word(state.alphaCombine);
-    out[8] = 0;
-    out[9] = word(v->oow);
-    out[10] = 0;
-    out[11] = word(state.width);
-    out[12] = word(state.offX);
-    out[13] = word(state.offY);
+    out[8] = word(v->oow);
 }
 
 void GlideRenderer::drawTriangle(const GrVertex* a, const GrVertex* b, const GrVertex* c)
@@ -321,6 +356,10 @@ void GlideRenderer::drawTriangle(const GrVertex* a, const GrVertex* b, const GrV
     writeVertex(out + 1, b, state);
     writeVertex(out + 2, c, state);
     f.vertexCount = count + 3;
+    // Alpha 1 everywhere with 1-src-alpha blending: the result does not depend on the background.
+    if (m_alphaBlend && (state.alphaCombine == 0.f || m_textureOpaque) && vertexAlpha(a) == 0xff &&
+        vertexAlpha(b) == 0xff && vertexAlpha(c) == 0xff)
+        ++f.opaqueTriangles;
 }
 
 }

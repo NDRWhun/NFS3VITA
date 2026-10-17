@@ -4,6 +4,7 @@
 #include <lib/renderer.h>
 #include <lib/gliderenderer.h>
 #include <lib/window.h>
+#include <platform/gxm.h>
 #include <platform/config.h>
 #include <platform/log.h>
 #include <platform/perf.h>
@@ -278,7 +279,7 @@ struct GrLfbInfo_t
 };
 
 typedef x86::reg32 GrMipMapMode_t;
-//static const GrMipMapMode_t GR_MIPMAP_DISABLE           = 0x0; /* no mip mapping  */
+static const GrMipMapMode_t GR_MIPMAP_DISABLE           = 0x0; /* no mip mapping  */
 //static const GrMipMapMode_t GR_MIPMAP_NEAREST           = 0x1; /* use nearest mipmap */
 //static const GrMipMapMode_t GR_MIPMAP_NEAREST_DITHER    = 0x2; /* GR_MIPMAP_NEAREST + LOD dith */
 
@@ -640,7 +641,7 @@ static void grColorCombine(WinApplication* app, x86::CPU& cpu,
     }
     if (other == GR_COMBINE_OTHER_NONE)
     {
-        s_glideRenderer->setTexture(0, 0);
+        s_glideRenderer->setTexture(0, 0, 8, 8);
     }
 }
 
@@ -921,15 +922,17 @@ static void grDepthBiasLevel(WinApplication* app, x86::CPU& cpu, x86::sreg16 bia
     NFS2_ASSERT(bias == 0);
 }
 
+// GR_MIPMAP_NEAREST and its dithered variant use the nearest level; lodBlend blends two levels.
 static void grTexMipMapMode(WinApplication* app, x86::CPU& cpu, GrChipID_t tmu, GrMipMapMode_t mode, BOOL lodBlend)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(tmu);
-    NFS2_USE(mode);
-    NFS2_USE(lodBlend);
     NFS2_ASSERT(tmu == 0);
-    //NFS2_ASSERT(false);
+    if (mode == GR_MIPMAP_DISABLE)
+        s_glideRenderer->setMipMode(pf::gxm::MipNone);
+    else
+        s_glideRenderer->setMipMode(lodBlend ? pf::gxm::MipBlend : pf::gxm::MipNearest);
 }
 
 static void grTexCombine(WinApplication* app, x86::CPU& cpu, GrChipID_t tmu,
@@ -1012,7 +1015,7 @@ static void grTexSource(WinApplication* app, x86::CPU& cpu, GrChipID_t tmu, uint
     NFS2_USE(info);
     NFS2_ASSERT(tmu == 0);
     NFS2_ASSERT(info->aspectRatio == GR_ASPECT_1x1);
-    s_glideRenderer->setTexture(tmu, startAddress);
+    s_glideRenderer->setTexture(tmu, startAddress, info->largeLod, info->smallLod);
 }
 
 // Clamps only when both s and t clamp; mixed modes wrap both.

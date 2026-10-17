@@ -3,15 +3,14 @@
 
 #include <lib/winapp.h>
 #include <winapi/types.h>
+#include <vector>
 
-namespace pf { namespace gxm { struct Frame; struct Vertex; enum Mapping : uint8_t; } }
+namespace pf { namespace gxm { struct Frame; struct Vertex; struct Texture; enum Mapping : uint8_t; enum MipMode : uint8_t; } }
 
 namespace win32
 {
 
 class Renderer;
-class GlideTMU;
-struct GlTextureSlot;
 
 enum TextureFormat
 {
@@ -45,7 +44,7 @@ struct GrVertex
     GrTmuVertex  tmuvtx[RENDERER_NUM_TMU];
 };
 
-// Records Glide draw calls into gxm frames; textures live in one shared atlas.
+// Records Glide draw calls into gxm frames; each downloaded texture is its own GPU texture.
 class GlideRenderer: public GenericResource
 {
 public:
@@ -55,25 +54,25 @@ public:
     void clear(x86::reg32 color);
     void swap();
     void render(x86::reg32 buffer);
-    x86::reg32 textureMemStart(x86::reg32 tmu);
-    x86::reg32 textureMemEnd(x86::reg32 tmu);
     x86::reg32 getTextureMemSize(x86::reg32 tmu, x86::reg32 largeMipmapSize, TextureFormat format);
     void setZWrite(bool enable);
     void setZTest(bool enable);
     void setAlphaBlendDst(AlphaBlend method);
     void setColorFactor(float colorFactor);
     void setAlphaFactor(float alphaFactor);
-    void setTexture(x86::reg32 tmu, x86::reg32 address);
+    // largeLod/smallLod: the level range the game describes the texture with (GR_LOD_256 = 0 .. GR_LOD_1 = 8).
+    void setTexture(x86::reg32 tmu, x86::reg32 address, x86::reg32 largeLod, x86::reg32 smallLod);
     void setTextureData(x86::reg32 tmu, x86::reg32 address, const void* data,
-                        x86::reg32 largeMipmap, x86::reg32 smallMimmap, TextureFormat format);
+                        x86::reg32 largeLod, x86::reg32 smallLod, TextureFormat format);
     void drawTriangle(const GrVertex* a, const GrVertex* b, const GrVertex* c);
     // Display area for the following triangles; kept across swaps until changed. A new renderer starts with MapBox.
     void setMapping(pf::gxm::Mapping mapping);
     // Texture addressing for the following triangles: clamp to the edge texels, or wrap (the initial state).
     void setTexClamp(bool clamp);
-    // Nearest-texel sampling instead of bilinear filtering for the following triangles; wrapped textures are
-    // always filtered bilinearly.
+    // Nearest-texel sampling instead of bilinear filtering for the following triangles.
     void setTexPoint(bool point);
+    // Mipmap use for the following triangles (grTexMipMapMode); a new renderer starts with MipNone.
+    void setMipMode(pf::gxm::MipMode mode);
 
     // Closes the active renderer's open draw call and releases its frame before the frame is submitted elsewhere.
     static void endActiveFrame();
@@ -85,13 +84,22 @@ private:
     struct VertexState
     {
         float colorCombine, alphaCombine;
-        float width, offX, offY;
+    };
+
+    // A downloaded texture, indexed by its Glide address / getTextureMemSize().
+    struct TextureEntry
+    {
+        pf::gxm::Texture*   texture;
+        x86::reg32          largeLod;
+        x86::reg32          smallLod;
+        bool                opaque;     // every texel has alpha 255
     };
 
     pf::gxm::Frame& frame();
     pf::gxm::Frame& beginFrame();
     void flush();
-    void useTextureSlot(const GlTextureSlot* slot);
+    TextureEntry* textureEntry(x86::reg32 address, bool create);
+    void bindTexture(const TextureEntry& entry);
     static void writeVertex(pf::gxm::Vertex* vertex, const GrVertex* v, const VertexState& state);
 
 private:
@@ -105,8 +113,11 @@ private:
     pf::gxm::Mapping        m_mapping;
     bool                    m_texClamp;
     bool                    m_texPoint;
+    pf::gxm::MipMode        m_mipMode;
     x86::reg32              m_textureAddress;   // texture memory address last bound to TMU 0
-    GlideTMU*               m_tmus[2];
+    const pf::gxm::Texture* m_texture;          // texture of the open draw call
+    bool                    m_textureOpaque;
+    std::vector<TextureEntry> m_textures;
 };
 
 }
