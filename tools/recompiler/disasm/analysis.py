@@ -13,7 +13,7 @@ State masks: bits 0-6 are FLAGS (ctx.FLAG_BIT), bits 8-15 general registers (ctx
 from capstone import x86 as X
 
 from .codegen import ctx as C
-from . import codegen
+from . import codegen, stack
 
 
 FCOM = ('fcom', 'fcomp', 'fcompp', 'ftst')
@@ -70,6 +70,14 @@ class Function:
         self.lazy_readers = set()   # producers with lazily served reads
         self.reloads = set()        # (memory producer, flag): reload f_<flag> from cpu.flags after it
         self.stores = {}            # (index, edge) -> flag mask stored to cpu.flags there
+        self.reg_stores = {}        # (index, edge) -> registers stored to cpu there
+        self.reg_reloads = {}       # call index -> registers reloaded from cpu after it
+
+    @property
+    def local_registers(self):
+        """Registers live in C++ locals (else every access goes to cpu)."""
+        p = self.program
+        return p.local_registers and self.entry_address not in p.memory_functions
 
     # ---- structure ----------------------------------------------------------------------------------------
     def is_label(self, i):
@@ -169,7 +177,8 @@ class Function:
                 codegen.generate(ctx, ins)
             e = ctx.effects
             self.effects[i] = e
-            self.use[i] = e.flag_use | e.flag_sync | e.reg_use << REG_SHIFT
+            # A partial register write merges into the register's current value: it reads it.
+            self.use[i] = e.flag_use | e.flag_sync | (e.reg_use | e.reg_partial) << REG_SHIFT
             self.kill[i] = e.flag_def | e.reg_def << REG_SHIFT
             if self.is_fused_fnstsw(i) or self.masks_condition_codes(i):
                 self.use[i] &= ~C.FLAG_BIT['fc']    # fused: read only when eax is live (see liveness)
@@ -204,16 +213,16 @@ class Function:
         return nxt.reg_name(nxt.operands[0].reg) in ('eax', 'ax') and not (nxt.operands[1].imm & 0x4500)
 
     def may_def_local(self):
-        """Flags this function may write, before its callees."""
+        """State (flags, registers) this function may change, before its callees."""
         mask = 0
         for i in self.reachable:
             e = self.effects[i]
-            mask |= e.flag_def | e.flag_maydef
+            mask |= e.flag_def | e.flag_maydef | (e.reg_def | e.reg_partial) << REG_SHIFT
             if self.instructions[i].mnemonic in MEMORY_DEFS:
                 mask |= C.ALL_FLAGS
             for x in self.exits[i]:
                 if x.kind in ('dyncall', 'dyntail'):
-                    mask |= C.ALL_FLAGS
+                    mask |= ALL_STATE
         return mask
 
     # ---- liveness -----------------------------------------------------------------------------------------
@@ -270,11 +279,19 @@ class Function:
         return bool(self.live_out[i] & C.FLAG_BIT[f])
 
     # ---- reaching definitions -----------------------------------------------------------------------------
+    def callee_delta(self, i):
+        """esp change of a direct call (the call's own -4 included), or None."""
+        b = self.branch[i]
+        if b[0] != 'call':
+            return None
+        info = self.program.stack.get(b[1])
+        return None if info is None or info.delta is None else info.delta - 4
+
     def callee_may_def(self, i):
         b = self.branch[i]
         if b[0] == 'call':
-            return self.program.may_def.get(b[1], C.ALL_FLAGS)
-        return C.ALL_FLAGS
+            return self.program.may_def.get(b[1], ALL_STATE)
+        return ALL_STATE
 
     def is_memory_producer(self, p, f):
         """p leaves cpu.flags authoritative for f: entry, a call that may change f, popfd."""
@@ -378,6 +395,56 @@ class Function:
                         self.need_valid(i, f)
             for edge, mask in stores.items():
                 self.stores[(i, edge)] = mask
+        if self.local_registers:
+            self.decide_registers()
+
+    def boundary_registers(self, i, x):
+        """Registers code outside may read on exit edge x of instruction i."""
+        if x.edge == 'call':
+            mask = self.exit_use(x) | (self.live_out[i] & self.callee_may_def(i))
+        else:
+            mask = self.exit_use(x)
+        return (mask >> REG_SHIFT) & C.ALL_REGS
+
+    def decide_registers(self):
+        """Registers live in locals: store the ones changed since cpu was last valid where code outside reads
+        them, reload after a call the ones it may change that are read later.
+
+        Callers keep the registers this function preserves in their locals and may still count them as valid
+        in cpu. So when cpu's copy of a preserved register was overwritten here (stored at a boundary, or
+        changed by a callee), it is stored back before leaving: the local holds the entry value there."""
+        info = self.program.stack.get(self.entry_address)
+        preserved = info.preserved if info else 0
+        state_in = [None] * self.n
+        state_in[self.entry] = (0, 0)       # (dirty: local newer than cpu, clobbered: cpu differs from entry)
+        work = [self.entry]
+        while work:
+            i = work.pop()
+            e = self.effects[i]
+            dirty, clobbered = state_in[i]
+            dirty |= e.reg_def | e.reg_partial
+            for x in self.exits[i]:
+                stored = dirty & self.boundary_registers(i, x)
+                if x.edge != 'call':
+                    stored |= clobbered & preserved
+                if stored:
+                    key = (i, x.edge)
+                    self.reg_stores[key] = self.reg_stores.get(key, 0) | stored
+                if x.edge == 'call':
+                    changed = (self.callee_may_def(i) >> REG_SHIFT) & C.ALL_REGS
+                    self.reg_reloads[i] = changed & (self.live_out[i] >> REG_SHIFT)
+                    clobbered |= stored | changed
+                    dirty &= ~stored & ~changed
+                    if self.callee_delta(i) is not None:
+                        # esp is moved by the callee's known delta here, not reloaded: cpu.esp may be stale.
+                        dirty |= C.REG_BIT['esp']
+            out = (dirty, clobbered)
+            for s in self.succ[i]:
+                old = state_in[s]
+                new = out if old is None else (old[0] | dirty, old[1] | clobbered)
+                if new != old:
+                    state_in[s] = new
+                    work.append(s)
 
     # ---- queries used by the code generators --------------------------------------------------------------
     def needs_local(self, i, f):
@@ -415,10 +482,17 @@ class Function:
 
     def store_lines(self, i, edge):
         mask = self.stores.get((i, edge), 0)
-        return ['cpu.flags.%s = %s;' % (f, self.flag_source(i, f)) for f in C.CPU_FLAGS if mask & C.FLAG_BIT[f]]
+        regs = self.reg_stores.get((i, edge), 0)
+        lines = ['cpu.%s = %s;' % (r, r) for r in C.REGS if regs & C.REG_BIT[r]]
+        return lines + ['cpu.flags.%s = %s;' % (f, self.flag_source(i, f)) for f in C.CPU_FLAGS if mask & C.FLAG_BIT[f]]
 
     def reload_lines(self, i):
-        return ['f_%s = cpu.flags.%s;' % (f, f) for f in C.CPU_FLAGS if (i, f) in self.reloads]
+        regs = self.reg_reloads.get(i, 0)
+        lines = ['%s = cpu.%s;' % (r, r) for r in C.REGS if regs & C.REG_BIT[r]]
+        delta = self.callee_delta(i) if self.local_registers else None
+        if delta is not None:
+            lines.append('esp = esp + %d;' % (delta + 4))
+        return lines + ['f_%s = cpu.flags.%s;' % (f, f) for f in C.CPU_FLAGS if (i, f) in self.reloads]
 
     def entry_loads(self):
         return [f for f in C.CPU_FLAGS if (self.ENTRY, f) in self.reloads]
@@ -442,8 +516,10 @@ class Function:
 
 class Program:
     def __init__(self, modules, thread_segments, skip_instructions, function_names, flags_preserved=(), not_code=(),
-                 native_overrides=()):
+                 native_overrides=(), local_registers=True, memory_functions=()):
         self.functions = {}
+        self.local_registers = local_registers
+        self.memory_functions = set(memory_functions)
         self.native_overrides = set(native_overrides)
         # Functions that save the caller's flags on entry (pushfd) and restore them before returning (popfd):
         # callers neither provide nor lose flags across a call to them.
@@ -494,13 +570,20 @@ class Program:
                         taken.add(value)
         return taken & entries
 
-    def compute_may_def(self, fns):
-        local = dict((fn.entry_address, fn.may_def_local()) for fn in fns)
+    def compute_may_def(self, fns, stack_infos=None):
+        """State each function may change, its callees included. With stack_infos, registers a function restores
+        before returning and an esp change known to its callers do not count."""
+        def kept(a):
+            info = stack_infos.get(a) if stack_infos else None
+            if not info:
+                return 0
+            mask = info.preserved << REG_SHIFT
+            if info.delta is not None:
+                mask |= C.REG_BIT['esp'] << REG_SHIFT
+            return mask
+        local = dict((fn.entry_address, fn.may_def_local() & ~kept(fn.entry_address)) for fn in fns)
         callees = dict((fn.entry_address, set(x.target for i in fn.reachable for x in fn.exits[i]
                                               if x.kind in ('call', 'tail'))) for fn in fns)
-        for a in self.flags_preserved:
-            local[a] = 0
-            callees[a] = set()
         may_def = dict(local)
         changed = True
         while changed:
@@ -508,7 +591,10 @@ class Program:
             for a, targets in callees.items():
                 v = may_def[a]
                 for t in targets:
-                    v |= may_def.get(t, C.ALL_FLAGS)
+                    v |= may_def.get(t, ALL_STATE)
+                v &= ~kept(a)
+                if a in self.flags_preserved:
+                    v &= ~C.ALL_FLAGS
                 if v != may_def[a]:
                     may_def[a] = v
                     changed = True
@@ -520,6 +606,8 @@ class Program:
             fn.classify()
             fn.record()
         self.compute_may_def(fns)
+        self.stack = stack.analyze(self, fns)
+        self.compute_may_def(fns, self.stack)
         for fn in fns:
             self.live_in[fn.entry_address] = 0
             self.ret_live[fn.entry_address] = 0

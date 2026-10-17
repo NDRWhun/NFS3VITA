@@ -59,6 +59,11 @@ def declarations(fn, body):
     text = '\n'.join(body)
     used = set(re.findall(r'\b(f_[a-z]{2}|lz[a-z]+_[0-9a-f]+)\b', text))
     lines = []
+    if fn.local_registers:
+        words = set(re.findall(r'\b(e[a-d]x|e[sd]i|e[sb]p)\b', text))
+        for r in C.REGS:
+            if r in words:
+                lines.append('  [[maybe_unused]] x86::reg32 %s = cpu.%s;' % (r, r))
     entry = fn.entry_loads()
     for f in C.CPU_FLAGS:
         name = 'f_' + f

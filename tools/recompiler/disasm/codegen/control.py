@@ -35,16 +35,17 @@ def cg_jecxz(ctx, *operands):
 
 
 def cg_call(ctx, destination):
-    esp = ctx.set_reg('esp', '%s - 4' % ctx.reg('esp'))
+    # The return address slot is not written: callees take their arguments relative to esp.
     if destination.type == X.X86_OP_IMM:
         ctx.boundary('call')
-        return ctx.exit_sync('call') + esp + ['%s(app, cpu);' % ctx.function_name(destination.imm),
-                                              'if (cpu.terminate) return;'] + ctx.after_call()
+        call = ['%s(app, cpu);' % ctx.function_name(destination.imm), 'if (cpu.terminate) return;']
+        return ctx.set_reg('esp', '%s - 4' % ctx.reg('esp')) + ctx.exit_sync('call') + call + ctx.after_call()
     ctx.boundary('dyncall')
-    return ['cpu.ip = %s;' % ctx.val(destination, 32)] + ctx.exit_sync('call') + esp + \
-        ['app->dynamic_call(cpu.ip, cpu);', 'if (cpu.terminate) return;'] + ctx.after_call()
+    target = ['cpu.ip = %s;' % ctx.val(destination, 32)]
+    call = ['app->dynamic_call(cpu.ip, cpu);', 'if (cpu.terminate) return;']
+    return target + ctx.set_reg('esp', '%s - 4' % ctx.reg('esp')) + ctx.exit_sync('call') + call + ctx.after_call()
 
 
 def cg_ret(ctx, *value):
     pop = 4 + (value[0].imm if value else 0)
-    return ctx.exit_sync('exit') + ctx.set_reg('esp', '%s + %d' % (ctx.reg('esp'), pop)) + ['return;']
+    return ctx.set_reg('esp', '%s + %d' % (ctx.reg('esp'), pop)) + ctx.exit_sync('exit') + ['return;']

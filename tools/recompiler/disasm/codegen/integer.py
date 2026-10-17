@@ -531,19 +531,29 @@ def cg_leave(ctx):
 
 # ---- runtime --------------------------------------------------------------------------------------------------
 
-def cg_cpuid(ctx):
-    for r in ('eax', 'ecx', 'edx', 'ebx'):
-        ctx.reg(r)
-        ctx.set_reg(r, '0')
+def _runtime(ctx, call, reads, writes):
+    """A CPU helper working on cpu: the registers it reads are stored first, the ones it writes reloaded."""
     ctx.boundary('runtime')
-    return ['cpu.cpuid();']
+    lines = []
+    for r in reads:
+        value = ctx.reg(r)
+        if ctx.fn.local_registers:
+            lines.append('cpu.%s = %s;' % (r, value))
+    lines.append(call)
+    for r in writes:
+        if ctx.fn.local_registers:
+            lines += ctx.set_reg(r, 'cpu.%s' % r)
+        else:
+            ctx.set_reg(r, '0')
+    return lines
+
+
+def cg_cpuid(ctx):
+    return _runtime(ctx, 'cpu.cpuid();', ('eax', 'ecx'), ('eax', 'ecx', 'edx', 'ebx'))
 
 
 def cg_rdtsc(ctx):
-    for r in ('eax', 'edx'):
-        ctx.set_reg(r, '0')
-    ctx.boundary('runtime')
-    return ['cpu.rdtsc();']
+    return _runtime(ctx, 'cpu.rdtsc();', (), ('eax', 'edx'))
 
 
 def cg_int3(ctx):

@@ -113,13 +113,21 @@ def check_binaries(directory):
             sys.exit('%s: SHA-256 %s, expected %s (only the original file fits the tables)' % (path, digest, expected))
 
 
+def read_addresses(path):
+    if not path:
+        return ()
+    with open(path) as f:
+        return [int(word, 16) for line in f for word in line.split('#')[0].split()]
+
+
 def write_analysis(path, program, modules):
     functions = []
     for module in modules:
         for sub in module.subroutines:
             a = sub.get_entry_point()
+            info = program.stack.get(a)
             functions.append({'entry': a, 'module': module.application_name, 'ret_live': program.ret_live[a],
-                              'live_in': program.live_in[a]})
+                              'live_in': program.live_in[a], 'preserved': info.preserved if info else 0})
     sections = []
     for module in modules:
         for data, address, length, name, ro, code in module.sections:
@@ -134,6 +142,10 @@ def main():
     parser.add_argument('--binaries', required=True, help='directory with the original game binaries')
     parser.add_argument('--out', required=True, help='output directory for the generated sources')
     parser.add_argument('--analysis', help='also write the analysis summary (JSON) for test tools')
+    parser.add_argument('--memory-registers', action='store_true',
+                        help='keep x86 registers in cpu instead of C++ locals (for comparisons)')
+    parser.add_argument('--memory-functions', metavar='FILE',
+                        help='file of hex function entries that keep registers in cpu (for bisecting)')
     args = parser.parse_args()
     check_binaries(args.binaries)
     os.makedirs(args.out, exist_ok=True)
@@ -157,7 +169,8 @@ def main():
                                         known_subroutines=[0xA847D0, 0xA84810], rebase_after=softtria)
     dlls = [eacsnd, softtria, voodoo2a]
     program = analysis.Program([application] + dlls, THREAD_SEGMENTS, SKIP_INSTRUCTIONS, {}, FLAGS_PRESERVED, NOT_CODE,
-                               NATIVE_OVERRIDES)
+                               NATIVE_OVERRIDES, local_registers=not args.memory_registers,
+                               memory_functions=read_addresses(args.memory_functions))
     program.analyze()
     application.write(args.out, program, dlls=dlls)
     if args.analysis:

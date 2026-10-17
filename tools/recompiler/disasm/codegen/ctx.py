@@ -207,21 +207,35 @@ class Ctx:
         """Rvalue of a general, sub- or segment register."""
         if name in SEGMENTS:
             return 'cpu.%s' % name
-        full = SUBREGS[name][0]
+        full, bits, shift = SUBREGS[name]
         if self.record:
             self.effects.reg_use |= REG_BIT[full]
-        return 'cpu.%s' % name
+        if not self.fn.local_registers:
+            return 'cpu.%s' % name
+        if bits == 32:
+            return full
+        if shift:
+            return '%s(%s >> %d)' % (T(bits), full, shift)
+        return '%s(%s)' % (T(bits), full)
 
     def set_reg(self, name, value):
         if name in SEGMENTS:
             return ['cpu.%s = %s;' % (name, value)]
-        full, bits, _ = SUBREGS[name]
+        full, bits, shift = SUBREGS[name]
         if self.record:
             if bits == 32:
                 self.effects.reg_def |= REG_BIT[full]
             else:
                 self.effects.reg_partial |= REG_BIT[full]
-        return ['cpu.%s = %s;' % (name, value)]
+        if not self.fn.local_registers:
+            return ['cpu.%s = %s;' % (name, value)]
+        if bits == 32:
+            return ['%s = %s;' % (full, value)]
+        keep = 0xffffffff & ~(mask(bits) << shift)
+        part = '%s(%s)' % (T(bits), value)
+        if shift:
+            part = '(x86::reg32(%s) << %d)' % (part, shift)
+        return ['%s = (%s & 0x%xu) | %s;' % (full, full, keep, part)]
 
     def edx_eax(self):
         return '((x86::reg64(%s) << 32) | %s)' % (self.reg('edx'), self.reg('eax'))
