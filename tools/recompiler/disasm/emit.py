@@ -48,6 +48,7 @@ def function_body(module, fn, function_names):
     if fn.branch[last][0] not in ('ret',) and not (fn.branch[last][0] in ('label', 'tail', 'dyntail', 'switch')
                                                    and fn.instructions[last].mnemonic == 'jmp'):
         ctx.begin(last)
+        ctx.fdepth = fn.fpu_exit_depth(last)
         lines += ['    ' + l for l in ctx.exit_sync('exit')]
     if sub.dynamic_labels:
         lines += ['  default:', '    NFS2_ASSERT(false);', '  }']
@@ -64,6 +65,10 @@ def declarations(fn, body):
         for r in C.REGS:
             if r in words:
                 lines.append('  [[maybe_unused]] x86::reg32 %s = cpu.%s;' % (r, r))
+    if re.search(r'\bfpu_count\b', text):
+        lines.append('  const x86::reg32 fpu_count = cpu.fpu.count;')
+    for n in sorted(set(int(x) for x in re.findall(r'\bfp(\d+)\b', text))):
+        lines.append('  [[maybe_unused]] x86::Float fp%d = 0;' % n)
     entry = fn.entry_loads()
     for f in C.CPU_FLAGS:
         name = 'f_' + f

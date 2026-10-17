@@ -156,6 +156,13 @@ def lazy_condition(kind, bits, v, cc):
     return None
 
 
+def fpu_slot(j):
+    """x87 register j above the entry stack (j <= 0: the caller's registers, in cpu.fpu)."""
+    if j >= 1:
+        return 'fp%d' % j
+    return 'cpu.fpu.regs[(fpu_count - %d) & 7]' % -j if j else 'cpu.fpu.regs[fpu_count & 7]'
+
+
 def lazy_local(kind, address, name):
     return 'lz%s_%x' % (name, address)
 
@@ -197,6 +204,8 @@ class Ctx:
         self.index = index
         self.ins = self.fn.instructions[index]
         self.effects = Effects() if self.record else None
+        # x87 depth above the entry stack while generating this instruction; None: the stack stays in cpu.fpu.
+        self.fdepth = None if self.record else self.fn.fpu_depth(index)
 
     @property
     def bounds(self):
@@ -309,6 +318,31 @@ class Ctx:
             return setup, self.load(bits, a), lambda v: self.store(bits, a, v)
         return [], self.val(op), lambda v: self.put(op, v)
 
+    # ---- x87 stack ----------------------------------------------------------------------------------------
+    def st(self, i):
+        """Lvalue of st(i)."""
+        if self.fdepth is None:
+            return 'cpu.fpu.st(%d)' % i
+        return fpu_slot(self.fdepth - i)
+
+    def fpush(self, value):
+        if self.fdepth is None:
+            return ['cpu.fpu.push(%s);' % value]
+        self.fdepth += 1
+        return ['%s = %s;' % (fpu_slot(self.fdepth), value),
+                'NFS2_ASSERT(fpu_count + %d <= 8);' % self.fdepth]
+
+    def fpop(self):
+        if self.fdepth is None:
+            return ['cpu.fpu.pop();']
+        self.fdepth -= 1
+        return []
+
+    def rndint(self):
+        if self.fdepth is None:
+            return 'cpu.fpu.rndint()'
+        return 'x86::Float(x86::roundIntegral(double(%s), cpu.fpu.control.rc))' % self.st(0)
+
     # ---- flags --------------------------------------------------------------------------------------------
     def flag(self, f):
         """Rvalue of a flag at the current instruction."""
@@ -388,7 +422,7 @@ class Ctx:
         """Statements before leaving the function or calling out on the given edge ('call', 'taken', 'exit')."""
         if self.record:
             return []
-        return self.fn.store_lines(self.index, edge)
+        return self.fn.store_lines(self.index, edge, self.fdepth)
 
     def after_call(self):
         if self.record:

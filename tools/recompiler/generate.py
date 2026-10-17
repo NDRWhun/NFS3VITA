@@ -129,7 +129,8 @@ def write_analysis(path, program, modules):
             a = sub.get_entry_point()
             info = program.stack.get(a)
             functions.append({'entry': a, 'module': module.application_name, 'ret_live': program.ret_live[a],
-                              'live_in': program.live_in[a], 'preserved': info.preserved if info else 0})
+                              'live_in': program.live_in[a], 'preserved': info.preserved if info else 0,
+                              'native': a in program.native_overrides})
     sections = []
     for module in modules:
         for data, address, length, name, ro, code in module.sections:
@@ -144,6 +145,8 @@ def main():
     parser.add_argument('--binaries', required=True, help='directory with the original game binaries')
     parser.add_argument('--out', required=True, help='output directory for the generated sources')
     parser.add_argument('--analysis', help='also write the analysis summary (JSON) for test tools')
+    parser.add_argument('--memory-x87', action='store_true',
+                        help='keep the x87 stack in cpu.fpu instead of C++ locals (for comparisons)')
     parser.add_argument('--memory-registers', action='store_true',
                         help='keep x86 registers in cpu instead of C++ locals (for comparisons)')
     parser.add_argument('--memory-functions', metavar='FILE',
@@ -172,6 +175,7 @@ def main():
     dlls = [eacsnd, softtria, voodoo2a]
     program = analysis.Program([application] + dlls, THREAD_SEGMENTS, SKIP_INSTRUCTIONS, {}, FLAGS_PRESERVED, NOT_CODE,
                                NATIVE_OVERRIDES, local_registers=not args.memory_registers,
+                               local_x87=not args.memory_x87,
                                memory_functions=read_addresses(args.memory_functions))
     program.analyze()
     application.write(args.out, program, dlls=dlls)

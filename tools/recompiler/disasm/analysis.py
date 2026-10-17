@@ -13,7 +13,7 @@ State masks: bits 0-6 are FLAGS (ctx.FLAG_BIT), bits 8-15 general registers (ctx
 from capstone import x86 as X
 
 from .codegen import ctx as C
-from . import codegen, stack
+from . import codegen, fpustack, stack
 
 
 FCOM = ('fcom', 'fcomp', 'fcompp', 'ftst')
@@ -480,11 +480,17 @@ class Function:
                     return direct
         return C.generic_condition(cc, {f: self.flag_source(i, f) for f in flags})
 
-    def store_lines(self, i, edge):
+    def store_lines(self, i, edge, fdepth=None):
+        """Stores before leaving on edge; fdepth is the x87 depth there when the stack is in locals."""
         mask = self.stores.get((i, edge), 0)
         regs = self.reg_stores.get((i, edge), 0)
         lines = ['cpu.%s = %s;' % (r, r) for r in C.REGS if regs & C.REG_BIT[r]]
-        return lines + ['cpu.flags.%s = %s;' % (f, self.flag_source(i, f)) for f in C.CPU_FLAGS if mask & C.FLAG_BIT[f]]
+        lines += ['cpu.flags.%s = %s;' % (f, self.flag_source(i, f)) for f in C.CPU_FLAGS if mask & C.FLAG_BIT[f]]
+        if fdepth is not None and edge != 'flags':
+            for j in range(1, fdepth + 1):
+                lines.append('cpu.fpu.regs[(fpu_count + %d) & 7] = fp%d;' % (j, j))
+            lines.append('cpu.fpu.count = fpu_count %s %d;' % ('+' if fdepth >= 0 else '-', abs(fdepth)))
+        return lines
 
     def reload_lines(self, i):
         regs = self.reg_reloads.get(i, 0)
@@ -492,7 +498,42 @@ class Function:
         delta = self.callee_delta(i) if self.local_registers else None
         if delta is not None:
             lines.append('esp = esp + %d;' % (delta + 4))
-        return lines + ['f_%s = cpu.flags.%s;' % (f, f) for f in C.CPU_FLAGS if (i, f) in self.reloads]
+        lines += ['f_%s = cpu.flags.%s;' % (f, f) for f in C.CPU_FLAGS if (i, f) in self.reloads]
+        d = self.fpu.depth[i]
+        if self.branch[i][0] == 'dyncall' and self.program.indirect_fpu_checked and d is not None:
+            # Indirect calls are assumed to keep the x87 depth; check it.
+            lines.append('NFS2_ASSERT(cpu.fpu.count == fpu_count %s %d);' % ('+' if d >= 0 else '-', abs(d)))
+        after = self.fpu_after_call(i)
+        if after is not None:
+            for j in range(1, after + 1):
+                lines.append('fp%d = cpu.fpu.regs[(fpu_count + %d) & 7];' % (j, j))
+        return lines
+
+    # ---- x87 stack in locals ------------------------------------------------------------------------------
+    def fpu_depth(self, i):
+        """x87 depth above the entry stack before instruction i, when the function keeps it in locals."""
+        if not self.fpu.local:
+            return None
+        return self.fpu.depth[i]
+
+    def fpu_after_call(self, i):
+        d = self.fpu_depth(i)
+        if d is None:
+            return None
+        b = self.branch[i]
+        delta = self.program.fpu_deltas.get(b[1]) if b[0] == 'call' else self.program.indirect_fpu_delta
+        if delta is None or delta == fpustack.NEVER:
+            return None
+        return d + delta
+
+    def fpu_exit_depth(self, i):
+        """x87 depth when control falls off the end after instruction i."""
+        d = self.fpu_depth(i)
+        if d is None:
+            return None
+        if self.is_call(i):
+            return self.fpu_after_call(i)
+        return d + fpustack.effect(self.instructions[i].mnemonic.split()[-1])
 
     def entry_loads(self):
         return [f for f in C.CPU_FLAGS if (self.ENTRY, f) in self.reloads]
@@ -516,9 +557,10 @@ class Function:
 
 class Program:
     def __init__(self, modules, thread_segments, skip_instructions, function_names, flags_preserved=(), not_code=(),
-                 native_overrides=(), local_registers=True, memory_functions=()):
+                 native_overrides=(), local_registers=True, memory_functions=(), local_x87=True):
         self.functions = {}
         self.local_registers = local_registers
+        self.local_x87 = local_x87
         self.memory_functions = set(memory_functions)
         self.native_overrides = set(native_overrides)
         # Functions that save the caller's flags on entry (pushfd) and restore them before returning (popfd):
@@ -607,6 +649,10 @@ class Program:
             fn.record()
         self.compute_may_def(fns)
         self.stack = stack.analyze(self, fns)
+        fpu = fpustack.analyze(self, fns)
+        self.fpu_deltas = dict((a, info.delta) for a, info in fpu.items())
+        for fn in fns:
+            fn.fpu = fpu[fn.entry_address]
         self.compute_may_def(fns, self.stack)
         for fn in fns:
             self.live_in[fn.entry_address] = 0
