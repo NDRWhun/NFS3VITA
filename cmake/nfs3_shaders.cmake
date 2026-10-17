@@ -31,8 +31,11 @@ function(nfs3_add_shader out_var name profile)
     set(gxp "${NFS3_SHADER_BINARY_DIR}/${name}.gxp")
     add_custom_command(
       OUTPUT "${gxp}"
-      COMMAND "${PSP2CGC}" -profile ${profile} -O3 -Wperf -o "${gxp}" "${src}"
+      # Relative source name: psp2cgc hashes the source path string into the header (bytes 16-19), so the
+      # output is then the same in every checkout.
+      COMMAND "${PSP2CGC}" -profile ${profile} -O3 -Wperf -o "${gxp}" "${name}.cg"
       COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${gxp}" "${prebuilt}"
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/shaders"
       DEPENDS "${src}"
       COMMENT "Compiling shader ${name}.cg (${profile})"
       VERBATIM)
