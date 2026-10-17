@@ -192,7 +192,7 @@ trademark of Electronic Arts; you must own a legal copy to play.
 [build-url]: ../../actions/workflows/build.yml
 [version-shield]: https://img.shields.io/badge/version-1.0-e8283a?style=flat-square
 [version-url]: ../../releases
-[release-shield]: https://img.shields.io/github/v/release/NDRWhun/NFS3VITA?include_prereleases&sort=semver&label=release&style=flat-square
+[release-shield]: https://img.shields.io/github/v/release/NDRWhun/NFS3VITA?label=release&style=flat-square
 [release-url]: ../../releases
 [downloads-shield]: https://img.shields.io/github/downloads/NDRWhun/NFS3VITA/total?label=downloads&style=flat-square
 [downloads-url]: ../../releases
