@@ -103,6 +103,9 @@ recurs when a header used by the generated code changes (`include/x86.h`, `cpu.h
 
 - [nfs-recompiled](https://github.com/motor-dev/nfs-recompiled) by motor-dev: the static recompilation of the game,
   its virtual x86 CPU and Win32 runtime that this port is based on.
+- [Grarak](https://github.com/Grarak): [psp2-tooling](https://github.com/Grarak/psp2-tooling), used to profile the
+  port on hardware, and [mh3-wii](https://github.com/Grarak/mh3-wii), whose recompilation work inspired the
+  performance approach.
 - [Modern Patch](https://gamebanana.com/mods/34590) by natko: widescreen HUD, menus and fixes of the release build.
 
 ## Layout
