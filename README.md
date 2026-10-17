@@ -101,7 +101,8 @@ recurs when a header used by the generated code changes (`include/x86.h`, `cpu.h
 
 ## Credits
 
-- [nfs-recompiled](https://github.com/motor-dev/nfs-recompiled): the static recompilation this port is based on.
+- [nfs-recompiled](https://github.com/motor-dev/nfs-recompiled) by motor-dev: the static recompilation of the game,
+  its virtual x86 CPU and Win32 runtime that this port is based on.
 - [Modern Patch](https://gamebanana.com/mods/34590) by natko: widescreen HUD, menus and fixes of the release build.
 
 ## Layout
