@@ -64,17 +64,9 @@ view (Hor+) and the original 4:3 HUD. Copy the game's `fedata` and `gamedata` fo
 
 ### Build environment
 
-Requirements: [VitaSDK](https://vitasdk.org), CMake 3.16+, Ninja and Python 3 (for the recompiler). The shaders ship prebuilt in `shaders/gxp/`; the official PSP2
-SDK (`host_tools/bin/psp2cgc`) is only needed to change them.
-
-Machine-specific paths are never stored in the repository. Set them as environment variables, or
-in `tools/env.local.ps1` (ignored by git):
-
-```powershell
-$env:VITASDK          = 'C:\vitasdk'                    # required
-$env:SCE_PSP2_SDK_DIR = 'C:\psp2-sdk'                   # optional: recompile shaders (refreshes shaders/gxp)
-$env:VITA3K_EXE       = 'C:\Vita3K\Vita3K.exe'          # optional: tools/run-vita3k.ps1 (Windows)
-```
+Requirements: [VitaSDK](https://vitasdk.org) (with `VITASDK` set), CMake 3.16+, Ninja and Python 3 (for the
+recompiler). The shaders ship prebuilt in `shaders/gxp/`; the official PSP2 SDK (`host_tools/bin/psp2cgc`) is only
+needed to change them.
 
 With PowerShell (Windows PowerShell 5.1 or PowerShell 7):
 
