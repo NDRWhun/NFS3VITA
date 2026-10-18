@@ -120,7 +120,6 @@ Optional settings go in `ux0:data/nfs3vita/nfs3vita.cfg`, one `key=value` per li
 
 - Fog is not drawn: the game's THRASH fog tables are skipped.
 - Options → Graphics → Screen Size cannot be selected with the pad; it lists only 960x544, use `resolution` instead.
-- Split screen has no pad for the second player.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
