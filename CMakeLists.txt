@@ -21,6 +21,7 @@ include("${VITASDK}/share/vita.cmake" REQUIRED)
 set(VITA_APP_NAME "NFS3VITA")
 set(VITA_TITLEID  "NFS3VITA1")
 set(VITA_VERSION  "01.00")
+set(PORT_VERSION  "1.0")
 
 option(NFS3_LOG_DEBUG        "Verbose runtime logging" OFF)
 option(NFS3_ASSERT_SOFT      "Log failed assertions instead of trapping" OFF)
@@ -117,7 +118,15 @@ target_link_libraries(NFS3VITA.elf
 vita_create_self(NFS3VITA.self NFS3VITA.elf UNSAFE)
 
 set(VITA_MKSFOEX_FLAGS "-d ATTRIBUTE2=12")
+configure_file(
+  ${CMAKE_SOURCE_DIR}/sce_sys/livearea/contents/template.xml.in
+  ${CMAKE_BINARY_DIR}/generated/livearea/template.xml
+  @ONLY)
 vita_create_vpk(NFS3VITA.vpk ${VITA_TITLEID} NFS3VITA.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}
+  FILE ${CMAKE_SOURCE_DIR}/sce_sys/icon0.png sce_sys/icon0.png
+  FILE ${CMAKE_SOURCE_DIR}/sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
+  FILE ${CMAKE_SOURCE_DIR}/sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
+  FILE ${CMAKE_BINARY_DIR}/generated/livearea/template.xml sce_sys/livearea/contents/template.xml
 )
