@@ -82,7 +82,7 @@ inline float depth(float term)
 // Byte 0 of a colour channel: fistp with the guest's rounding mode.
 inline x86::reg32 channel(const x86::CPU& cpu, x86::reg32 address)
 {
-    return x86::reg32(x86::sreg32(x86::roundIntegral(ldd(address), cpu.fpu.control.rc))) & 0xff;
+    return x86::reg32(x86::fistInteger<x86::sreg32>(x86::roundIntegral(ldd(address), cpu.fpu.control.rc))) & 0xff;
 }
 
 // Pushes cdecl arguments below esp and calls the THRASH export in a pointer slot.
