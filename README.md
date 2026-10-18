@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="assets/logo.svg" alt="NFS3VITA" width="128" height="128">
+<img src="assets/logo.png" alt="NFS3VITA" width="128" height="128">
 
 <h3 align="center">NFS3VITA 1.0</h3>
 
