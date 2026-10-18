@@ -191,15 +191,15 @@ trademark of Electronic Arts; you must own a legal copy to play.
 
 <!-- BADGES -->
 
-[build-shield]: https://img.shields.io/github/actions/workflow/status/NDRWhun/NFS3VITA/build.yml?branch=main&label=build&style=for-the-badge&labelColor=1a1f3d&logo=githubactions&logoColor=white&cacheSeconds=3600
+[build-shield]: https://img.shields.io/github/actions/workflow/status/NDRWhun/NFS3VITA/build.yml?branch=main&label=build&style=for-the-badge&labelColor=1a1f3d&logo=githubactions&logoColor=white
 [build-url]: ../../actions/workflows/build.yml
-[release-shield]: https://img.shields.io/github/v/release/NDRWhun/NFS3VITA?label=release&style=for-the-badge&labelColor=1a1f3d&color=ff3b5c&logo=github&logoColor=white&cacheSeconds=3600
+[release-shield]: https://img.shields.io/github/v/release/NDRWhun/NFS3VITA?label=release&style=for-the-badge&labelColor=1a1f3d&color=ff3b5c&logo=github&logoColor=white
 [release-url]: ../../releases
-[downloads-shield]: https://img.shields.io/github/downloads/NDRWhun/NFS3VITA/total?label=downloads&style=for-the-badge&labelColor=1a1f3d&color=b44dff&cacheSeconds=3600
+[downloads-shield]: https://img.shields.io/github/downloads/NDRWhun/NFS3VITA/total?label=downloads&style=for-the-badge&labelColor=1a1f3d&color=b44dff
 [downloads-url]: ../../releases
-[issues-shield]: https://img.shields.io/github/issues/NDRWhun/NFS3VITA?label=issues&style=for-the-badge&labelColor=1a1f3d&color=2f7bff&logo=github&logoColor=white&cacheSeconds=3600
+[issues-shield]: https://img.shields.io/github/issues/NDRWhun/NFS3VITA?label=issues&style=for-the-badge&labelColor=1a1f3d&color=2f7bff&logo=github&logoColor=white
 [issues-url]: ../../issues
-[commit-shield]: https://img.shields.io/github/last-commit/NDRWhun/NFS3VITA?label=updated&style=for-the-badge&labelColor=1a1f3d&color=ff3b5c&cacheSeconds=3600
+[commit-shield]: https://img.shields.io/github/last-commit/NDRWhun/NFS3VITA?label=updated&style=for-the-badge&labelColor=1a1f3d&color=ff3b5c
 [commit-url]: ../../commits/main
 [platform-shield]: https://img.shields.io/badge/PS%20Vita-native-2f7bff?style=for-the-badge&labelColor=1a1f3d&logo=playstation&logoColor=white
 [platform-url]: https://vitasdk.org
