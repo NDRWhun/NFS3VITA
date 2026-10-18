@@ -11,10 +11,13 @@
 namespace pf
 {
 
+// s_logPath is read and cleared under s_logMutex, which stays until the process exits so that no logger can use a
+// deleted mutex.
 static const char* s_logPath = nullptr;
 static SceUID      s_logMutex = -1;
 
-// Each line is appended with its own open/close so nothing is lost if the process dies.
+// Each line is appended with its own open/close so nothing is lost if the process dies; lines are infrequent (no
+// per-frame logging), so the cost does not matter.
 static void writeLine(const char* level, const char* fmt, va_list args)
 {
     char buffer[1024];
@@ -58,12 +61,11 @@ void logInit(const char* logFilePath)
 
 void logShutdown()
 {
+    if (s_logMutex >= 0)
+        sceKernelLockMutex(s_logMutex, 1, nullptr);
     s_logPath = nullptr;
     if (s_logMutex >= 0)
-    {
-        sceKernelDeleteMutex(s_logMutex);
-        s_logMutex = -1;
-    }
+        sceKernelUnlockMutex(s_logMutex, 1);
 }
 
 void logDebug(const char* fmt, ...)

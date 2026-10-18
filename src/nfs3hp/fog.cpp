@@ -1,5 +1,5 @@
 #include "fog.h"
-#include <voodoo2a.h>
+#include "voodoo2aexport.h"
 #include <lib/winapp.h>
 #include <platform/log.h>
 
@@ -38,7 +38,7 @@ void thrashSetState(win32::WinApplication* app, x86::CPU& cpu)
 
 void install(win32::WinApplication& app)
 {
-    const x86::reg32 setState = (*voodoo2a::s_registry)["_THRASH_setstate@8"].first;
+    const x86::reg32 setState = voodoo2aExport("_THRASH_setstate@8");
     s_originalSetState = app.replaceMethod(setState, &thrashSetState);
     pf::logInfo("fog: THRASH fog tables skipped (host fog not implemented)");
 }

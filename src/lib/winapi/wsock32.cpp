@@ -201,8 +201,7 @@ int setsockopt(WinApplication* app, x86::CPU& cpu,
 int closesocket(WinApplication* app, x86::CPU& cpu, SOCKET s)
 {
     NFS2_USE(cpu);
-    app->freeResource(s);
-    return 0;
+    return app->freeResource(s) ? 0 : -1;
 }
 
 SOCKET socket(WinApplication* app, x86::CPU& cpu, int af, int type, int protocol)

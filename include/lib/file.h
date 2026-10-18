@@ -22,6 +22,10 @@ enum
     OPEN_ALWAYS                     = 4,
     TRUNCATE_EXISTING               = 5,
 
+    FILE_READ_DATA                  = 0x00000001,
+    FILE_WRITE_DATA                 = 0x00000002,
+    FILE_APPEND_DATA                = 0x00000004,
+    GENERIC_ALL                     = 0x10000000,
     GENERIC_WRITE                   = 0x40000000,
     GENERIC_READ                    = 0x80000000,
 
@@ -79,8 +83,9 @@ public:
     x86::reg32 truncate();
     x86::reg32 size() const;
 
-    static const std::string& getCurrentDirectory();
-    static void setCurrentDirectory(const char* path);
+    static std::string getCurrentDirectory();
+    // False if the directory does not exist.
+    static bool setCurrentDirectory(const char* path);
     static void setDataDirectory(const char* path);
     static void setCdDirectory(const char* path);
     static x86::reg32 remove(const char* filename);

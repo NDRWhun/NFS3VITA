@@ -97,8 +97,8 @@ void mmxSelfTest()
     for (int i = 0; i < 8; ++i) e.set16(i, uint16_t((int32_t(int16_t(a.u16(i))) * int16_t(b.u16(i))) >> 16));
     check("mulhi_epi16", _mm_mulhi_epi16(va, vb), e);
     for (int i = 0; i < 4; ++i)
-        e.set32(i, uint32_t(int32_t(int16_t(a.u16(2 * i))) * int16_t(b.u16(2 * i))
-                          + int32_t(int16_t(a.u16(2 * i + 1))) * int16_t(b.u16(2 * i + 1))));
+        e.set32(i, uint32_t(int32_t(int16_t(a.u16(2 * i))) * int16_t(b.u16(2 * i)))
+                 + uint32_t(int32_t(int16_t(a.u16(2 * i + 1))) * int16_t(b.u16(2 * i + 1))));
     check("madd_epi16", _mm_madd_epi16(va, vb), e);
 
     // Immediate shifts, in range and past the lane width.

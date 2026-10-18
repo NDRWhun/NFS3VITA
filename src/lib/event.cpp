@@ -1,4 +1,5 @@
 #include <lib/event.h>
+#include <platform/log.h>
 #include <platform/sync.h>
 #include <platform/time.h>
 #include <algorithm>
@@ -8,11 +9,13 @@ namespace win32
 {
 
 static const x86::reg32 WAIT_TIMEOUT = 0x102;
+static const x86::reg32 WAIT_FAILED = 0xffffffff;
+static const size_t MAXIMUM_WAIT_OBJECTS = 64;
 
 // One blocked WaitFor*Object call. Lives on the waiting thread's stack while it is registered.
 struct EventWaiter
 {
-    Event* const*   events;
+    Event**         events;     // null once the event is closed
     size_t          count;
     bool            waitAll;
     bool            done;       // satisfied; result is valid
@@ -46,12 +49,19 @@ Event::Event(const char* name, bool manualReset, bool initialState)
     NFS2_USE(name);
 }
 
+// A wait still registered goes on without the event, as a wait on a closed handle does on Windows.
 Event::~Event()
 {
+    pf::LwLockGuard guard(*s_lock);
     if (m_handle)
-    {
-        pf::LwLockGuard guard(*s_lock);
         s_handles.erase(m_handle);
+    for (EventWaiter* waiter : m_waiters)
+    {
+        for (size_t i = 0; i < waiter->count; ++i)
+        {
+            if (waiter->events[i] == this)
+                waiter->events[i] = nullptr;
+        }
     }
 }
 
@@ -111,7 +121,7 @@ bool Event::tryComplete(EventWaiter& waiter)
     {
         for (size_t i = 0; i < waiter.count; ++i)
         {
-            if (!waiter.events[i]->m_isSet)
+            if (!waiter.events[i] || !waiter.events[i]->m_isSet)
                 return false;
         }
         for (size_t i = 0; i < waiter.count; ++i)
@@ -124,7 +134,7 @@ bool Event::tryComplete(EventWaiter& waiter)
     else
     {
         size_t i = 0;
-        while (i < waiter.count && !waiter.events[i]->m_isSet)
+        while (i < waiter.count && (!waiter.events[i] || !waiter.events[i]->m_isSet))
             ++i;
         if (i == waiter.count)
             return false;
@@ -163,14 +173,30 @@ x86::reg32 Event::pulse()
     return 1;
 }
 
-x86::reg32 Event::wait(x86::CPU& cpu, Event** begin, Event** end, bool waitAll, x86::sreg32 timeout)
+x86::reg32 Event::wait(x86::CPU& cpu, const x86::reg32* handles, size_t count, bool waitAll, x86::sreg32 timeout)
 {
-    EventWaiter waiter = { begin, size_t(end - begin), waitAll, false, false, WAIT_TIMEOUT, nullptr };
+    if (!handles || count == 0 || count > MAXIMUM_WAIT_OBJECTS)
+        return WAIT_FAILED;
+    Event* events[MAXIMUM_WAIT_OBJECTS];
+    Event** const begin = events;
+    Event** const end = events + count;
+    EventWaiter waiter = { events, count, waitAll, false, false, WAIT_TIMEOUT, nullptr };
     s_lock->lock();
+    for (size_t i = 0; i < count; ++i)
+    {
+        std::unordered_map<x86::reg32, Event*>::const_iterator it = s_handles.find(handles[i]);
+        if (it == s_handles.end())
+        {
+            s_lock->unlock();
+            pf::logError("WaitFor*Object: 0x%x is not an event handle", handles[i]);
+            return WAIT_FAILED;
+        }
+        events[i] = it->second;
+    }
     if (tryComplete(waiter) || timeout == 0 || cpu.terminate)
     {
         s_lock->unlock();
-        return waiter.done ? waiter.result : timeout == 0 ? WAIT_TIMEOUT : x86::reg32(-1);
+        return waiter.done ? waiter.result : timeout == 0 ? WAIT_TIMEOUT : WAIT_FAILED;
     }
     if (s_semaphores.empty())
     {
@@ -210,7 +236,10 @@ x86::reg32 Event::wait(x86::CPU& cpu, Event** begin, Event** end, bool waitAll, 
     }
 
     for (Event** e = begin; e < end; ++e)
-        unregister((*e)->m_waiters, &waiter);
+    {
+        if (*e)
+            unregister((*e)->m_waiters, &waiter);
+    }
     unregister(s_waiters, &waiter);
     // A wake-up posted after the timeout is still pending: take it so the pooled semaphore is at 0.
     if (waiter.posted)
@@ -219,7 +248,7 @@ x86::reg32 Event::wait(x86::CPU& cpu, Event** begin, Event** end, bool waitAll, 
     s_lock->unlock();
     if (waiter.done)
         return waiter.result;
-    return cpu.terminate ? x86::reg32(-1) : WAIT_TIMEOUT;
+    return cpu.terminate ? WAIT_FAILED : WAIT_TIMEOUT;
 }
 
 }

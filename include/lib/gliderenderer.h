@@ -75,7 +75,8 @@ public:
     void setMipMode(pf::gxm::MipMode mode);
 
     // Room for count triangles in the open draw call, recorded with the current state: the caller stores their
-    // 3 * count vertices there (combine factors from colorCombine/alphaCombine).
+    // 3 * count vertices there (combine factors from colorCombine/alphaCombine). Triangles that do not fit get
+    // room that is not drawn.
     pf::gxm::Vertex* appendTriangles(x86::reg32 count);
     float colorCombine() const { return m_vertexState.colorCombine; }
     float alphaCombine() const { return m_vertexState.alphaCombine; }
@@ -108,6 +109,7 @@ private:
     TextureEntry* textureEntry(x86::reg32 address, bool create);
     void bindTexture(const TextureEntry& entry);
     static void writeVertex(pf::gxm::Vertex* vertex, const GrVertex* v, const VertexState& state);
+    static void logDropped() __attribute__((cold));
 
 private:
     Renderer*               m_renderer;
@@ -124,6 +126,7 @@ private:
     x86::reg32              m_textureAddress;   // texture memory address last bound to TMU 0
     const pf::gxm::Texture* m_texture;          // texture of the open draw call
     std::vector<TextureEntry> m_textures;
+    std::vector<pf::gxm::Vertex> m_scratch;     // room for triangles past the vertex buffer
 };
 
 }

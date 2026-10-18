@@ -34,12 +34,11 @@ class FakeRetInstruction:
 
 
 class Subroutine:
-    def __init__(self, application, section, skipped_blob, data_blob, jump_table, thread_unsafe):
+    def __init__(self, application, section, skipped_blob, data_blob, jump_table):
         self.application = application
         self.skipped_blob = skipped_blob
         self.data_blob = data_blob
         self.jump_table = jump_table
-        self.thread_unsafe = thread_unsafe
         self.section = section
 
         self.phony = 0
@@ -66,7 +65,7 @@ class Subroutine:
     @classmethod
     def merge(self, subroutine1, subroutine2):
         result = Subroutine(subroutine1.application, subroutine1.section, subroutine1.skipped_blob, subroutine1.data_blob,
-                            subroutine1.jump_table, subroutine1.thread_unsafe or subroutine2.thread_unsafe)
+                            subroutine1.jump_table)
         result.instructions = subroutine1.instructions + subroutine2.instructions
         result.calls = subroutine1.calls + subroutine2.calls
         result.static_labels = subroutine1.static_labels + subroutine2.static_labels
@@ -76,7 +75,7 @@ class Subroutine:
 
     def duplicate_split(self, split_address):
         # duplicate with jump
-        s = Subroutine(self.application, self.section, [], [], [], self.thread_unsafe)
+        s = Subroutine(self.application, self.section, [], [], [])
         s.phony = split_address
         s.instructions = self.instructions[:]
         s.static_labels = self.static_labels[:]
@@ -98,15 +97,12 @@ class Subroutine:
             elif instruction.operands[0].type == x86.X86_OP_MEM:
                 vtable = instruction.operands[0].mem.disp
                 instruction.potential_destinations = []
-                vtable_size = 0
                 dest = self.application.get_dword(vtable)
                 while self.application.is_code_address(dest):
                     instruction.potential_destinations.append(dest)
                     vtable += 4
                     self.calls.append((instruction.address, dest))
                     dest = self.application.get_dword(vtable)
-                    vtable_size += 1
-                #print('found vtable 0x%08x - %d' % (instruction.operands[0].mem.disp, vtable_size))
         if instruction.mnemonic[0] == 'j' or instruction.mnemonic in LOOPS:
             if instruction.operands[0].type == x86.X86_OP_IMM:
                 dest = instruction.operands[0].imm
@@ -115,7 +111,6 @@ class Subroutine:
                 print('--> 0x%08x %16s %s' % (instruction.address, instruction.mnemonic, instruction.op_str))
             elif instruction.operands[0].type == x86.X86_OP_MEM:
                 jtable = instruction.operands[0].mem.disp
-                jtable_size = 0
                 dest = self.application.get_dword(jtable)
                 instruction.potential_destinations = []
                 while self.application.is_code_address(dest):
@@ -123,9 +118,6 @@ class Subroutine:
                     self.dynamic_labels.append((instruction.address, dest))
                     jtable += 4
                     dest = self.application.get_dword(jtable)
-                    jtable_size += 1
-                #if jtable_size == 0:
-                #   print('Invalid jump table at instruction 0x%08x: 0x%08x' % (instruction.address, jtable))
         if instruction.mnemonic in ('jmp', 'ret'):
             dest_labels = [x for _, x in self.dynamic_labels + self.static_labels]
             if instruction.address + instruction.size not in dest_labels:

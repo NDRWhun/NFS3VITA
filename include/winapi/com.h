@@ -14,6 +14,8 @@ class IUnknown;
 
 x86::reg32 ComAlloc(WinApplication* app);
 x86::reg32 ComGetIndex(WinApplication* app, const IUnknown* pointer);
+// IID_IUnknown, which every object answers.
+bool isUnknown(const GUID& iid);
 
 bool InitialiseComMemory(WinApplication* app);
 

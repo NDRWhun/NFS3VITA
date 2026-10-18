@@ -13,8 +13,8 @@
 #include <winapi/glide2x.h>
 #include <platform/log.h>
 #include <platform/perf.h>
-#include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <vector>
 
 namespace win32
@@ -111,20 +111,11 @@ WinApplication::WinApplication(const char* appName, x86::reg32 baseAddress, cons
 
 WinApplication::~WinApplication()
 {
-    delete m_appNameW;
-    delete m_appName;
     // Timer callbacks and guest threads stop first so no guest code runs while resources are freed.
     Timer::fini();
-    std::vector<Thread*> threads;
-    m_resourceContext->lock();
-    for (std::map<x86::reg32, GenericResource*>::const_iterator it = m_resources.begin(); it != m_resources.end(); ++it)
-    {
-        if (Thread* thread = dynamic_cast<Thread*>(it->second))
-            threads.push_back(thread);
-    }
-    m_resourceContext->unlock();
-    for (std::vector<Thread*>::iterator it = threads.begin(); it != threads.end(); ++it)
-        (*it)->terminate();
+    Thread::terminateAll();
+    delete m_appNameW;
+    delete m_appName;
     // Highest handles first: later objects depend on earlier ones (sound buffers on their device).
     m_resourceContext->lock();
     while (!m_resources.empty())
@@ -208,18 +199,22 @@ GenericResource* WinApplication::getResource(x86::reg32 resource)
     return result;
 }
 
-void WinApplication::freeResource(x86::reg32 resource)
+// Deleted outside the resource lock: a destructor may wait for a thread that needs it.
+bool WinApplication::freeResource(x86::reg32 resource)
 {
-    if (resource != 0xffffffff)
+    m_resourceContext->lock();
+    std::map<x86::reg32, GenericResource*>::iterator it = m_resources.find(resource);
+    if (it == m_resources.end())
     {
-        m_resourceContext->lock();
-        std::map<x86::reg32, GenericResource*>::iterator it = m_resources.find(resource);
-        NFS2_ASSERT(it != m_resources.end());
-        it->second->setResourceIndex(0);
-        delete it->second;
-        m_resources.erase(it);
         m_resourceContext->unlock();
+        return false;
     }
+    GenericResource* object = it->second;
+    m_resources.erase(it);
+    m_resourceContext->unlock();
+    object->setResourceIndex(0);
+    delete object;
+    return true;
 }
 
 void WinApplication::registerMethod(x86::reg32 pointer, Method method)
@@ -287,6 +282,8 @@ int WinApplication::runThread(x86::CPU& cpu, x86::reg32 entryPoint, x86::reg32 p
     {
         win32::MemMap threadStorage(4096);
         win32::MemMap threadStack(1024 * 1024);
+        // A new thread block is zeroed, as on Windows.
+        memset(&getMemory<x86::reg8>(threadStorage.getBlockStart()), 0, threadStorage.getBlockSize());
         cpu.init(threadStorage.getBlockStart(), entryPoint);
         getMemory<Mutex*>(cpu.efs + ThreadLockOffset) = threadLock ? m_executionContext : nullptr;
         getMemory<x86::reg32>(cpu.efs + ThreadPreemptsOffset) = preempts ? 1 : 0;
@@ -335,21 +332,6 @@ void WinApplication::unlockContext(const x86::CPU& cpu)
     {
         --m_contextDepth;
         executionContext->unlock();
-    }
-}
-
-void WinApplication::unmarkContext(const x86::CPU& cpu)
-{
-    Mutex* executionContext = getMemory<Mutex*>(cpu.efs + ThreadLockOffset);
-    if (executionContext)
-    {
-        --m_contextDepth;
-        executionContext->unlock();
-        getMemory<Mutex*>(cpu.efs + ThreadLockOffset) = nullptr;
-    }
-    else
-    {
-        NFS2_ASSERT(false);
     }
 }
 

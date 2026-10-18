@@ -251,25 +251,14 @@ File::File(const char* path, x86::reg32 mode, x86::reg32 flags, x86::reg32 creat
 {
     NFS2_USE(flags);
     initReadFilter();
-    int openFlags = 0;
-    switch(mode)
-    {
-    case GENERIC_READ:
-        openFlags |= O_RDONLY;
-        break;
-    case GENERIC_WRITE:
-        openFlags |= O_WRONLY;
-        break;
-    case GENERIC_READ|GENERIC_WRITE:
-        openFlags |= O_RDWR;
-        break;
-    default:
-        NFS2_ASSERT(false);
-    }
+    // Access 0 only queries the file: opened for reading.
+    const bool reads = (mode & (GENERIC_READ | GENERIC_ALL | FILE_READ_DATA)) != 0;
+    const bool writes = (mode & (GENERIC_WRITE | GENERIC_ALL | FILE_WRITE_DATA | FILE_APPEND_DATA)) != 0;
+    int openFlags = writes ? (reads ? O_RDWR : O_WRONLY) : O_RDONLY;
     switch(creationFlags)
     {
     case CREATE_NEW:
-        openFlags |= O_CREAT;
+        openFlags |= O_CREAT | O_EXCL;
         break;
     case CREATE_ALWAYS:
         openFlags |= O_CREAT | O_TRUNC;
@@ -283,7 +272,8 @@ File::File(const char* path, x86::reg32 mode, x86::reg32 flags, x86::reg32 creat
         openFlags |= O_TRUNC;
         break;
     default:
-        NFS2_ASSERT(false);
+        pf::logError("CreateFile %s: unknown creation disposition %u", m_filename.c_str(), unsigned(creationFlags));
+        return;
     }
     // The scratch file standing in for the null device may not exist yet.
     if (m_filename == s_dataDirectory + "nul.tmp")
@@ -337,6 +327,11 @@ x86::reg32 File::seek(x86::reg32 mode, x86::sreg32 offset)
 
 x86::reg32 File::read(void* buffer, x86::reg32 max, x86::reg32* totalRead)
 {
+    if (m_file < 0)
+    {
+        *totalRead = 0;
+        return 0;
+    }
     const off_t offset = m_readFilter ? lseek(m_file, 0, SEEK_CUR) : 0;
     *totalRead = x86::reg32(::read(m_file, buffer, max));
     if (m_readFilter && offset >= 0 && *totalRead != x86::reg32(-1))
@@ -367,16 +362,15 @@ x86::reg32 File::size() const
 }
 
 // Win32 form: no trailing backslash except for a drive root.
-const std::string& File::getCurrentDirectory()
+std::string File::getCurrentDirectory()
 {
-    static std::string result;
-    result = s_currentDirectory;
+    std::string result = s_currentDirectory;
     if (result.size() > 3)
         result.pop_back();
     return result;
 }
 
-void File::setCurrentDirectory(const char* path)
+bool File::setCurrentDirectory(const char* path)
 {
     std::string directory = normalizeGuestDirectory(absoluteGuestPath(path));
     std::string host = normalizePath(moveToRoot(directory));
@@ -385,23 +379,24 @@ void File::setCurrentDirectory(const char* path)
     if (stat(host.c_str(), &buffer) != 0 || !S_ISDIR(buffer.st_mode))
     {
         pf::logError("SetCurrentDirectory %s: not found (%s)", path, host.c_str());
-        return;
+        return false;
     }
     s_currentDirectory = directory;
     pf::logDebug("current directory %s", s_currentDirectory.c_str());
+    return true;
 }
 
 void File::setDataDirectory(const char* path)
 {
     s_dataDirectory = path;
-    if (s_dataDirectory.back() != '/')
+    if (s_dataDirectory.empty() || s_dataDirectory.back() != '/')
         s_dataDirectory.append("/");
 }
 
 void File::setCdDirectory(const char* path)
 {
     s_cdDirectory = path;
-    if (s_cdDirectory.back() != '/')
+    if (s_cdDirectory.empty() || s_cdDirectory.back() != '/')
         s_cdDirectory.append("/");
 }
 

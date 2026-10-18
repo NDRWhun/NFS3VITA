@@ -5,7 +5,6 @@
 #include <lib/event.h>
 #include <lib/file.h>
 #include <lib/library.h>
-#include <lib/process.h>
 #include <lib/timer.h>
 #include <lib/window.h>
 #include <lib/thread.h>
@@ -44,22 +43,40 @@ struct OSVERSIONINFOEXA
     BYTE  wReserved;
 };
 
+// Pseudo handles of the calling process and thread; they need no closing.
+static const HANDLE CurrentProcessHandle = 0xffffffff;
+static const HANDLE CurrentThreadHandle = 0xfffffffe;
+
+static const DWORD WAIT_FAILED = 0xffffffff;
+static const DWORD MEM_COMMIT = 0x1000;
+static const DWORD MEM_RELEASE = 0x8000;
+
+// Copies text with its terminator if it fits in size characters; false (nothing copied) otherwise.
+static bool copyString(char* buffer, DWORD size, const char* text)
+{
+    const size_t length = strlen(text);
+    if (!buffer || length >= size)
+        return false;
+    memcpy(buffer, text, length + 1);
+    return true;
+}
+
+// Win32 convention for returned paths: the length without the terminator when the text fits, else the size
+// needed with it (nothing copied).
+static DWORD returnPath(char* buffer, DWORD size, const std::string& path)
+{
+    if (!copyString(buffer, size, path.c_str()))
+        return DWORD(path.size() + 1);
+    return DWORD(path.size());
+}
+
 BOOL CloseHandle(WinApplication* app, x86::CPU& cpu,
                  HANDLE hObject)
 {
-    if (!hObject)
+    NFS2_USE(cpu);
+    if (!hObject || hObject == CurrentProcessHandle || hObject == CurrentThreadHandle)
         return 1;
-    // Closing the last handle of a running thread stops and joins it; the thread needs the execution lock to
-    // return from guest code.
-    if (dynamic_cast<win32::Thread*>(app->getResource(hObject)))
-    {
-        app->unlockContext(cpu);
-        app->freeResource(hObject);
-        app->lockContext(cpu);
-        return 1;
-    }
-    app->freeResource(hObject);
-    return 1;
+    return app->freeResource(hObject) ? 1 : 0;
 }
 
 LONG CompareFileTime(WinApplication* app, x86::CPU& cpu,
@@ -151,7 +168,15 @@ HANDLE CreateFileMappingA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(dwMaximumSizeLow);
     NFS2_USE(lpName);
     NFS2_ASSERT(flProtect & 0x2);
-    File* file = new File(*dynamic_cast<File*>(app->getResource(hFile)));
+    const File* source = dynamic_cast<File*>(app->getResource(hFile));
+    if (!source)
+        return 0;
+    File* file = new File(*source);
+    if (!*file)
+    {
+        delete file;
+        return 0;
+    }
     return app->allocateResource(file);
 }
 
@@ -217,9 +242,21 @@ BOOL DuplicateHandle(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(dwDesiredAccess);
     NFS2_USE(bInheritHandle);
     NFS2_USE(dwOptions);
-    win32::GenericResource* sourceHandle = dynamic_cast<win32::GenericResource*>(app->getResource(hSourceHandle));
-    NFS2_ASSERT(dynamic_cast<win32::Thread*>(sourceHandle));
-    *lpTargetHandle = app->allocateResource(dynamic_cast<win32::Thread*>(sourceHandle)->duplicate());
+    if (!lpTargetHandle)
+        return 0;
+    // Only thread handles are duplicated; a handle of the current thread carries no state.
+    if (hSourceHandle == CurrentThreadHandle)
+    {
+        *lpTargetHandle = app->allocateResource(new win32::Thread());
+        return 1;
+    }
+    win32::Thread* thread = dynamic_cast<win32::Thread*>(app->getResource(hSourceHandle));
+    if (!thread)
+    {
+        pf::logError("DuplicateHandle: 0x%x is not a thread handle", hSourceHandle);
+        return 0;
+    }
+    *lpTargetHandle = app->allocateResource(thread->duplicate());
     return 1;
 }
 
@@ -268,8 +305,7 @@ BOOL FindClose(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    app->freeResource(hFindFile);
-    return 1;
+    return app->freeResource(hFindFile) ? 1 : 0;
 }
 
 HANDLE FindFirstFileA(WinApplication* app, x86::CPU& cpu,
@@ -293,7 +329,7 @@ BOOL FindNextFileA(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(cpu);
     FileEnumerator* enumerator = dynamic_cast<FileEnumerator*>(app->getResource(hFindFile));
-    return enumerator->findNext(lpFindFileData);
+    return enumerator && enumerator->findNext(lpFindFileData);
 }
 
 BOOL FlushFileBuffers(WinApplication* app, x86::CPU& cpu,
@@ -320,8 +356,7 @@ BOOL FreeLibrary(WinApplication* app, x86::CPU& cpu,
                  HMODULE hLibModule)
 {
     NFS2_USE(cpu);
-    app->freeResource(hLibModule);
-    return 1;
+    return app->freeResource(hLibModule) ? 1 : 0;
 }
 
 UINT GetACP(WinApplication* app, x86::CPU& cpu)
@@ -417,16 +452,14 @@ DWORD GetCurrentDirectoryA(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(nBufferLength);
-    NFS2_ASSERT(lpBuffer);
-    strcpy(lpBuffer, File::getCurrentDirectory().c_str());
-    return static_cast<DWORD>(File::getCurrentDirectory().length());
+    return returnPath(lpBuffer, nBufferLength, File::getCurrentDirectory());
 }
 
 HANDLE GetCurrentProcess(WinApplication* app, x86::CPU& cpu)
 {
+    NFS2_USE(app);
     NFS2_USE(cpu);
-    return app->allocateResource(new win32::Process());
+    return CurrentProcessHandle;
 }
 
 DWORD GetCurrentProcessId(WinApplication* app, x86::CPU& cpu)
@@ -445,8 +478,9 @@ DWORD GetCurrentThreadId(WinApplication* app, x86::CPU& cpu)
 
 HANDLE GetCurrentThread(WinApplication* app, x86::CPU& cpu)
 {
+    NFS2_USE(app);
     NFS2_USE(cpu);
-    return app->allocateResource(new win32::Thread());
+    return CurrentThreadHandle;
 }
 
 BOOL GetDiskFreeSpaceA(WinApplication* app, x86::CPU& cpu,
@@ -494,8 +528,8 @@ DWORD GetFileAttributesA(WinApplication* app, x86::CPU& cpu,
     struct stat status;
     if (stat(File::hostPath(lpFileName).c_str(), &status) != 0)
         return 0xffffffff;
-    // Directories: FILE_ATTRIBUTE_DIRECTORY; files keep the read-only bit the runtime always reported.
-    return S_ISDIR(status.st_mode) ? 0x10 : 0x1;
+    // FILE_ATTRIBUTE_DIRECTORY or FILE_ATTRIBUTE_NORMAL.
+    return S_ISDIR(status.st_mode) ? 0x10 : 0x80;
 }
 
 BOOL GetFileTime(WinApplication* app, x86::CPU& cpu,
@@ -527,6 +561,8 @@ DWORD GetFileSize(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(cpu);
     win32::File* file = dynamic_cast<win32::File*>(app->getResource(hFile));
+    if (!file)
+        return 0xffffffff;
     if (lpFileSizeHigh)
         *lpFileSizeHigh = 0;
     return file->size();
@@ -543,31 +579,35 @@ DWORD GetFileType(WinApplication* app, x86::CPU& cpu,
 DWORD GetFullPathNameA(WinApplication* app, x86::CPU& cpu,
                        LPCSTR lpFileName, DWORD nBufferLength, LPSTR lpBuffer, x86::reg32* lpFilePart)
 {
-    NFS2_USE(nBufferLength);
-    x86::reg32 lpBufferAddress = app->getMemory<x86::reg32>(cpu.esp + 12);
-    NFS2_ASSERT(&app->getMemory<char>(lpBufferAddress) == lpBuffer);
+    if (!lpFileName)
+        return 0;
+    const x86::reg32 lpBufferAddress = app->getMemory<x86::reg32>(cpu.esp + 12);
     // Absolute names pass through; relative names are rooted in the guest current directory.
+    std::string path;
     if (strlen(lpFileName) >= 2 && lpFileName[1] == ':')
     {
-        strcpy(lpBuffer, lpFileName);
+        path = lpFileName;
     }
     else
     {
-        strcpy(lpBuffer, File::getCurrentDirectory().c_str());
-        if (lpBuffer[strlen(lpBuffer) - 1] != '\\')
-            strcat(lpBuffer, "\\");
-        strcat(lpBuffer, lpFileName);
+        path = File::getCurrentDirectory();
+        if (path.back() != '\\')
+            path += '\\';
+        path += lpFileName;
     }
-    const char* lastSeparator = strrchr(lpBuffer, '\\');
-    *lpFilePart = lpBufferAddress + static_cast<x86::reg32>(lastSeparator ? lastSeparator + 1 - lpBuffer : 0);
-    return static_cast<DWORD>(strlen(lpBuffer));
+    const DWORD result = returnPath(lpBuffer, nBufferLength, path);
+    if (result < nBufferLength && lpFilePart)
+    {
+        const size_t lastSeparator = path.rfind('\\');
+        *lpFilePart = lpBufferAddress + x86::reg32(lastSeparator == std::string::npos ? 0 : lastSeparator + 1);
+    }
+    return result;
 }
 
 DWORD GetLastError(WinApplication* app, x86::CPU& cpu)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    //NFS2_ASSERT(false);
     return 0;
 }
 
@@ -604,27 +644,15 @@ DWORD GetModuleFileNameA(WinApplication* app, x86::CPU& cpu,
                          HMODULE hModule, LPSTR lpFilename, DWORD nSize)
 {
     NFS2_USE(cpu);
-    NFS2_USE(nSize);
-    *(lpFilename++) = 'C';
-    *(lpFilename++) = ':';
-    *(lpFilename++) = '\\';
-    if (!hModule)
-    {
-        const char* exeFilename = app->getAppNameRaw();
-        DWORD result = 0;
-        while (*exeFilename)
-        {
-            *(lpFilename++) = *(exeFilename++);
-            result++;
-        }
-        *lpFilename = 0;
-        return result;
-    }
-    else
-    {
-        NFS2_ASSERT(false);
+    // Only the executable (handle 0, or 1 from GetModuleHandleA) has a file name.
+    if (hModule > 1 || !lpFilename || nSize == 0)
         return 0;
-    }
+    // A buffer too small gets nSize - 1 characters and the terminator, and the result is nSize.
+    const std::string path = std::string("C:\\") + app->getAppNameRaw();
+    const DWORD length = DWORD(std::min<size_t>(path.size(), nSize - 1));
+    memcpy(lpFilename, path.c_str(), length);
+    lpFilename[length] = 0;
+    return length < path.size() ? nSize : length;
 }
 
 DWORD GetModuleFileNameW(WinApplication* app, x86::CPU& cpu,
@@ -685,30 +713,16 @@ HANDLE GetStdHandle(WinApplication* app, x86::CPU& cpu,
                     DWORD nStdHandle)
 {
     NFS2_USE(cpu);
-    switch(nStdHandle)
-    {
-    case x86::reg32(-10):
-        {
-            // stdin
-            win32::File* h = new win32::File(0, "stdin");
-            return app->allocateResource(h);
-        }
-    case x86::reg32(-11):
-        {
-            // stdout
-            win32::File* h = new win32::File(1, "stdout");
-            return app->allocateResource(h);
-        }
-    case x86::reg32(-12):
-        {
-            // stderr
-            win32::File* h = new win32::File(2, "stderr");
-            return app->allocateResource(h);
-        }
-    default:
-        NFS2_ASSERT(false);
+    // STD_INPUT_HANDLE (-10), STD_OUTPUT_HANDLE (-11), STD_ERROR_HANDLE (-12): one handle each, made again only
+    // after the game closes it.
+    static const char* const names[3] = { "stdin", "stdout", "stderr" };
+    static HANDLE handles[3] = { 0, 0, 0 };
+    const x86::reg32 index = x86::reg32(-10) - nStdHandle;
+    if (index >= 3)
         return HANDLE(-1);
-    }
+    if (!handles[index] || !dynamic_cast<win32::File*>(app->getResource(handles[index])))
+        handles[index] = app->allocateResource(new win32::File(int(index), names[index]));
+    return handles[index];
 }
 
 void GetSystemInfo(WinApplication* app, x86::CPU& cpu,
@@ -719,8 +733,8 @@ void GetSystemInfo(WinApplication* app, x86::CPU& cpu,
     lpSystemInfo->wProcessorArchitecture = 0;
     lpSystemInfo->wReserved = 0;
     lpSystemInfo->dwPageSize = 4096;
-    lpSystemInfo->lpMinimumApplicationAddress = 0x2000;
-    lpSystemInfo->lpMinimumApplicationAddress = 0xffffffff;
+    lpSystemInfo->lpMinimumApplicationAddress = 0x10000;
+    lpSystemInfo->lpMaximumApplicationAddress = 0x7ffeffff;
     lpSystemInfo->dwActiveProcessorMask = 1;
     lpSystemInfo->dwNumberOfProcessors = 1;
     lpSystemInfo->dwProcessorType = 2;
@@ -793,18 +807,16 @@ BOOL GetVolumeInformationA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(lpRootPathName);
-    if (lpVolumeNameBuffer && nVolumeNameSize)
-    {
-        strcpy(lpVolumeNameBuffer, "DISK");
-    }
+    if (lpVolumeNameBuffer && !copyString(lpVolumeNameBuffer, nVolumeNameSize, "DISK"))
+        return 0;
+    if (lpFileSystemNameBuffer && !copyString(lpFileSystemNameBuffer, nFileSystemNameSize, "FAT"))
+        return 0;
     if (lpVolumeSerialNumber)
         *lpVolumeSerialNumber = 0x12345678;
     if (lpMaximumComponentLength)
         *lpMaximumComponentLength = 255;
     if (lpFileSystemFlags)
         *lpFileSystemFlags = 1|2|4;
-    if (lpFileSystemNameBuffer && nFileSystemNameSize)
-        strcpy(lpFileSystemNameBuffer, "FAT");
     return 1;
 }
 
@@ -869,19 +881,33 @@ x86::reg32 MapViewOfFile(WinApplication* app, x86::CPU& cpu,
                          HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh,
                          DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap)
 {
-    NFS2_USE(app);
-    NFS2_USE(cpu);
     NFS2_USE(dwDesiredAccess);
-    NFS2_ASSERT(dwFileOffsetHigh == 0);
-    app->unlockContext(cpu);
     File* file = dynamic_cast<File*>(app->getResource(hFileMappingObject));
+    if (!file || dwFileOffsetHigh != 0)
+        return 0;
+    // Size 0 maps from the offset to the end of the file.
+    const x86::reg32 fileSize = file->size();
+    if (dwNumberOfBytesToMap == 0)
+        dwNumberOfBytesToMap = fileSize > dwFileOffsetLow ? fileSize - dwFileOffsetLow : 0;
+    if (dwNumberOfBytesToMap == 0)
+        return 0;
+    app->unlockContext(cpu);
     MemMap* result = new MemMap(dwNumberOfBytesToMap);
-    void* data = &app->getMemory<void>(result->getBlockStart());
-    file->seek(0, x86::sreg32(dwFileOffsetLow));
+    x86::reg8* data = &app->getMemory<x86::reg8>(result->getBlockStart());
     x86::reg32 bytesRead = 0;
-    file->read(data, dwNumberOfBytesToMap, &bytesRead);
-    NFS2_ASSERT(bytesRead == dwNumberOfBytesToMap);
+    const bool loaded = file->seek(0, x86::sreg32(dwFileOffsetLow)) == dwFileOffsetLow
+                     && file->read(data, dwNumberOfBytesToMap, &bytesRead);
+    if (loaded)
+    {
+        // Past the end of the file the view reads as zeros.
+        memset(data + bytesRead, 0, result->getBlockSize() - bytesRead);
+    }
     app->lockContext(cpu);
+    if (!loaded)
+    {
+        delete result;
+        return 0;
+    }
     return result->getBlockStart();
 }
 
@@ -904,19 +930,18 @@ int MultiByteToWideChar(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(cpu);
     NFS2_USE(CodePage);
     NFS2_USE(dwFlags);
-    NFS2_USE(cchWideChar);
-    int result = 0;
-    if (lpWideCharStr)
-        *lpWideCharStr++ = 0xfffe;
-    for (int i = 0; i < cbMultiByte; ++i)
-    {
-        result++;
-        if (lpWideCharStr)
-            *lpWideCharStr++ = *lpMultiByteStr++;
-        if (!*lpMultiByteStr)
-            break;
-    }
-    return result;
+    // Bytes map to the same code points. cbMultiByte -1 converts up to and with the terminator; cchWideChar 0 asks
+    // for the length; a buffer too small fails.
+    if (!lpMultiByteStr || cbMultiByte == 0 || cchWideChar < 0)
+        return 0;
+    const int length = cbMultiByte < 0 ? int(strlen(lpMultiByteStr)) + 1 : cbMultiByte;
+    if (cchWideChar == 0)
+        return length;
+    if (!lpWideCharStr || length > cchWideChar)
+        return 0;
+    for (int i = 0; i < length; ++i)
+        lpWideCharStr[i] = WCHAR(x86::reg8(lpMultiByteStr[i]));
+    return length;
 }
 
 void OutputDebugStringA(WinApplication* app, x86::CPU& cpu,
@@ -937,7 +962,6 @@ BOOL PeekConsoleInputA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(lpBuffer);
     NFS2_USE(nLength);
     NFS2_USE(lpNumberOfEventsRead);
-    //NFS2_ASSERT(false);
     *lpNumberOfEventsRead = 0;
     return 1;
 }
@@ -946,7 +970,7 @@ BOOL PulseEvent(WinApplication* app, x86::CPU& cpu, HANDLE hEvent)
 {
     NFS2_USE(cpu);
     Event* event = dynamic_cast<Event*>(app->getResource(hEvent));
-    return event->pulse();
+    return event ? event->pulse() : 0;
 }
 
 BOOL PurgeComm(WinApplication* app, x86::CPU& cpu,
@@ -969,7 +993,6 @@ BOOL ReadConsoleInputA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(hConsoleInput);
     NFS2_USE(lpBuffer);
     NFS2_USE(nLength);
-    //NFS2_ASSERT(false);
     *lpNumberOfEventsRead = 0;
     return 1;
 }
@@ -1008,10 +1031,7 @@ BOOL ResetEvent(WinApplication* app, x86::CPU& cpu, HANDLE hEvent)
     NFS2_USE(cpu);
     Event* event = dynamic_cast<Event*>(app->getResource(hEvent));
     if (!event)
-    {
-        NFS2_ASSERT(false);
         return 0;
-    }
     event->reset();
     return 1;
 }
@@ -1021,6 +1041,8 @@ DWORD ResumeThread(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(cpu);
     win32::Thread* thread = dynamic_cast<win32::Thread*>(app->getResource(hThread));
+    if (!thread)
+        return 0xffffffff;
     thread->resume();
     return 1;
 }
@@ -1077,7 +1099,6 @@ BOOL SetConsoleMode(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(cpu);
     NFS2_USE(hConsoleHandle);
     NFS2_USE(dwMode);
-    //NFS2_ASSERT(false);
     return 1;
 }
 
@@ -1086,9 +1107,9 @@ BOOL SetCurrentDirectoryA(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    pf::logDebug("SetCurrentDirectory %s", lpPathName);
-    File::setCurrentDirectory(lpPathName);
-    return 1;
+    if (!lpPathName || !*lpPathName)
+        return 0;
+    return File::setCurrentDirectory(lpPathName) ? 1 : 0;
 }
 
 BOOL SetEndOfFile(WinApplication* app, x86::CPU& cpu,
@@ -1096,7 +1117,7 @@ BOOL SetEndOfFile(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(cpu);
     File* file = dynamic_cast<File*>(app->getResource(hFile));
-    return file->truncate();
+    return file ? file->truncate() : 0;
 }
 
 BOOL SetEnvironmentVariableA(WinApplication* app, x86::CPU& cpu,
@@ -1106,7 +1127,6 @@ BOOL SetEnvironmentVariableA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(cpu);
     NFS2_USE(lpName);
     NFS2_USE(lpValue);
-    // TODO?
     return 0;
 }
 
@@ -1148,7 +1168,6 @@ BOOL SetFileAttributesA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(cpu);
     NFS2_USE(lpFileName);
     NFS2_USE(dwFileAttributes);
-    //NFS2_ASSERT(false);
     return 0;
 }
 
@@ -1156,9 +1175,9 @@ DWORD SetFilePointer(WinApplication* app, x86::CPU& cpu,
                      HANDLE hFile, LONG lDistanceToMove, PLONG lpDistanceToMoveHigh, DWORD dwMoveMethod)
 {
     NFS2_USE(cpu);
-    win32::File* file= dynamic_cast<win32::File*>(app->getResource(hFile));
+    win32::File* file = dynamic_cast<win32::File*>(app->getResource(hFile));
     NFS2_ASSERT(lpDistanceToMoveHigh == 0);
-    return file->seek(dwMoveMethod, lDistanceToMove);
+    return file ? file->seek(dwMoveMethod, lDistanceToMove) : 0xffffffff;
 }
 
 void SetLastError(WinApplication* app, x86::CPU& cpu,
@@ -1216,11 +1235,14 @@ BOOL TerminateThread(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(cpu);
     NFS2_USE(dwExitCode);
+    // The pseudo handle of the calling thread is not a thread object: the call fails, the thread goes on.
     Thread* thread = dynamic_cast<Thread*>(app->getResource(hThread));
+    if (!thread)
+        return 0;
     app->unlockContext(cpu);
     thread->terminate();
     app->lockContext(cpu);
-    return 0;
+    return 1;
 }
 
 DWORD TlsAlloc(WinApplication* app, x86::CPU& cpu)
@@ -1277,28 +1299,31 @@ BOOL UnmapViewOfFile(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    if (lpBaseAddress)
-    {
-        MemMap* memBlock = MemMap::findBlock(lpBaseAddress);
-        delete memBlock;
-        return 1;
-    }
-    else
-    {
+    MemMap* memBlock = lpBaseAddress ? MemMap::findBlock(lpBaseAddress) : nullptr;
+    if (!memBlock)
         return 0;
-    }
+    delete memBlock;
+    return 1;
 }
 
+// Every block is reserved and committed at once: committing pages of a block returns them as they are.
 x86::reg32 VirtualAlloc(WinApplication* app, x86::CPU& cpu,
-                        LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect)
+                        Packed<void> lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect)
 {
     NFS2_USE(cpu);
-    NFS2_USE(flAllocationType);
     NFS2_USE(flProtect);
-    NFS2_ASSERT(lpAddress == nullptr);
+    if (dwSize == 0)
+        return 0;
+    if (lpAddress)
+    {
+        const MemMap* block = MemMap::findBlock(lpAddress);
+        if (!(flAllocationType & MEM_COMMIT) || !block
+            || x86::reg64(lpAddress) + dwSize > x86::reg64(block->getBlockStart()) + block->getBlockSize())
+            return 0;
+        return lpAddress & ~4095u;
+    }
     MemMap* map = new MemMap(dwSize);
-    void* data = &app->getMemory<void>(map->getBlockStart());
-    memset(data, 0, dwSize);
+    memset(&app->getMemory<x86::reg8>(map->getBlockStart()), 0, dwSize);
     return map->getBlockStart();
 }
 
@@ -1308,9 +1333,12 @@ BOOL VirtualFree(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(dwSize);
-    NFS2_ASSERT(dwFreeType = 0x8000);
-    MemMap* memBlock = MemMap::findBlock(lpAddress);
-    delete memBlock;
+    MemMap* memBlock = lpAddress ? MemMap::findBlock(lpAddress) : nullptr;
+    if (!memBlock)
+        return 0;
+    // MEM_DECOMMIT keeps the block: its pages stay committed.
+    if (dwFreeType == MEM_RELEASE)
+        delete memBlock;
     return 1;
 }
 
@@ -1323,7 +1351,6 @@ BOOL VirtualProtect(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(dwSize);
     NFS2_USE(flNewProtect);
     NFS2_USE(lpflOldProtect);
-    // TODO?
     return 1;
 }
 
@@ -1333,7 +1360,8 @@ SIZE_T VirtualQuery(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     MemMap* memBlock = MemMap::findBlock(lpAddress);
-    NFS2_ASSERT(dwLength == sizeof(MEMORY_BASIC_INFORMATION));
+    if (!memBlock || !lpBuffer || dwLength < sizeof(MEMORY_BASIC_INFORMATION))
+        return 0;
     lpBuffer->BaseAddress = memBlock->getBlockStart();
     lpBuffer->AllocationBase = memBlock->getBlockStart();
     lpBuffer->AllocationProtect = 0x04; //READWRITE
@@ -1344,24 +1372,14 @@ SIZE_T VirtualQuery(WinApplication* app, x86::CPU& cpu,
     return sizeof(*lpBuffer);
 }
 
+// Only events are waited on; any other handle fails the wait (WAIT_FAILED).
 DWORD WaitForMultipleObjectsEx(WinApplication* app, x86::CPU& cpu,
                                DWORD nCount, const HANDLE *lpHandles, BOOL bWaitAll,
                                DWORD dwMilliseconds, BOOL bAlertable)
 {
-    NFS2_USE(cpu);
     NFS2_USE(bAlertable);
-    std::vector<win32::Event*> events(nCount);
-    for (x86::reg32 i = 0; i < nCount; ++i)
-    {
-        events[i] = dynamic_cast<win32::Event*>(app->getResource(lpHandles[i]));
-        if (!events[i])
-        {
-            NFS2_ASSERT(false);
-            return 0xffffffff;
-        }
-    }
     app->unlockContext(cpu);
-    DWORD result = DWORD(win32::Event::wait(cpu, &events.front(), &events.front() + nCount, bWaitAll, x86::sreg32(dwMilliseconds)));
+    const DWORD result = DWORD(win32::Event::wait(cpu, lpHandles, nCount, bWaitAll != 0, x86::sreg32(dwMilliseconds)));
     app->lockContext(cpu);
     return result;
 }
@@ -1369,15 +1387,8 @@ DWORD WaitForMultipleObjectsEx(WinApplication* app, x86::CPU& cpu,
 DWORD WaitForSingleObject(WinApplication* app, x86::CPU& cpu,
                           HANDLE hHandle, DWORD dwMilliseconds)
 {
-    NFS2_USE(cpu);
-    Event* event = dynamic_cast<win32::Event*>(app->getResource(hHandle));
-    if (!event)
-    {
-        NFS2_ASSERT(false);
-        return 0xffffffff;
-    }
     app->unlockContext(cpu);
-    DWORD result = DWORD(win32::Event::wait(cpu, &event, &event + 1, false, x86::sreg32(dwMilliseconds)));
+    const DWORD result = DWORD(win32::Event::wait(cpu, &hHandle, 1, false, x86::sreg32(dwMilliseconds)));
     app->lockContext(cpu);
     return result;
 }
@@ -1441,6 +1452,7 @@ namespace
 {
 
 typedef std::vector<std::pair<std::string, std::string>> ProfileSection;
+typedef std::vector<std::pair<std::string, ProfileSection>> Profile;
 
 std::string trim(const std::string& text)
 {
@@ -1450,19 +1462,25 @@ std::string trim(const std::string& text)
     return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
 }
 
-// The key=value lines of a section, keys and values trimmed and values without surrounding quotes. Empty when the
-// file or the section does not exist.
-ProfileSection readProfileSection(const char* fileName, const char* section)
+// The sections of an ini file in file order with their key=value lines, keys and values trimmed and values
+// without surrounding quotes; a section named twice is one section. Empty when the file does not exist.
+Profile readProfile(const char* fileName)
 {
-    ProfileSection entries;
+    Profile profile;
+    if (!fileName)
+        return profile;
     File file(fileName, GENERIC_READ, 0, OPEN_EXISTING);
     if (!file)
-        return entries;
+        return profile;
     std::string text(file.size(), '\0');
     x86::reg32 length = 0;
-    file.read(&text[0], x86::reg32(text.size()), &length);
+    if (!text.empty())
+        file.read(&text[0], x86::reg32(text.size()), &length);
     text.resize(length);
-    bool inSection = false;
+    // A UTF-8 byte order mark is not part of the first line.
+    if (text.compare(0, 3, "\xef\xbb\xbf") == 0)
+        text.erase(0, 3);
+    size_t section = std::string::npos;
     size_t position = 0;
     while (position < text.size())
     {
@@ -1476,23 +1494,50 @@ ProfileSection readProfileSection(const char* fileName, const char* section)
         if (line[0] == '[')
         {
             const size_t close = line.find(']');
-            inSection = close != std::string::npos && strcasecmp(trim(line.substr(1, close - 1)).c_str(), section) == 0;
+            section = std::string::npos;
+            if (close == std::string::npos)
+                continue;
+            const std::string name = trim(line.substr(1, close - 1));
+            for (size_t i = 0; i < profile.size() && section == std::string::npos; ++i)
+            {
+                if (strcasecmp(profile[i].first.c_str(), name.c_str()) == 0)
+                    section = i;
+            }
+            if (section == std::string::npos)
+            {
+                section = profile.size();
+                profile.emplace_back(name, ProfileSection());
+            }
             continue;
         }
         const size_t equals = line.find('=');
-        if (!inSection || equals == std::string::npos)
+        if (section == std::string::npos || equals == std::string::npos)
             continue;
         std::string value = trim(line.substr(equals + 1));
         if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
             value = value.substr(1, value.size() - 2);
-        entries.emplace_back(trim(line.substr(0, equals)), value);
+        profile[section].second.emplace_back(trim(line.substr(0, equals)), value);
     }
-    return entries;
+    return profile;
+}
+
+const ProfileSection* findProfileSection(const Profile& profile, const char* section)
+{
+    for (const auto& entry : profile)
+    {
+        if (strcasecmp(entry.first.c_str(), section) == 0)
+            return &entry.second;
+    }
+    return nullptr;
 }
 
 bool readProfileValue(const char* fileName, const char* section, const char* key, std::string* value)
 {
-    for (const auto& entry : readProfileSection(fileName, section))
+    const Profile profile = readProfile(fileName);
+    const ProfileSection* entries = findProfileSection(profile, section);
+    if (!entries)
+        return false;
+    for (const auto& entry : *entries)
     {
         if (strcasecmp(entry.first.c_str(), key) == 0)
         {
@@ -1503,6 +1548,31 @@ bool readProfileValue(const char* fileName, const char* section, const char* key
     return false;
 }
 
+// Stores the strings, each terminated, then a final terminator. A list that does not fit is cut to size - 2
+// characters, terminated twice, and size - 2 is returned, as Windows does.
+DWORD copyProfileList(const std::vector<std::string>& items, LPSTR buffer, DWORD size)
+{
+    if (!buffer || size < 2)
+        return 0;
+    DWORD length = 0;
+    for (const std::string& item : items)
+    {
+        if (length + item.size() + 2 > size)
+        {
+            memcpy(buffer + length, item.c_str(), size - 2 - length);
+            buffer[size - 2] = 0;
+            buffer[size - 1] = 0;
+            return size - 2;
+        }
+        memcpy(buffer + length, item.c_str(), item.size() + 1);
+        length += DWORD(item.size() + 1);
+    }
+    buffer[length] = 0;
+    if (length == 0)
+        buffer[1] = 0;
+    return length;
+}
+
 }
 
 UINT GetPrivateProfileIntA(WinApplication* app, x86::CPU& cpu,
@@ -1511,41 +1581,53 @@ UINT GetPrivateProfileIntA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     std::string value;
-    if (!readProfileValue(lpFileName, lpAppName, lpKeyName, &value))
+    if (!lpAppName || !lpKeyName || !readProfileValue(lpFileName, lpAppName, lpKeyName, &value))
         return UINT(nDefault);
     return UINT(strtol(value.c_str(), nullptr, 10));
 }
 
+// "key=value" per entry.
 DWORD GetPrivateProfileSectionA(WinApplication* app, x86::CPU& cpu,
                                 LPCSTR lpAppName, LPSTR lpReturnedString, DWORD nSize, LPCSTR lpFileName)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    if (nSize < 2)
-        return 0;
-    // "key=value\0" per entry, then "\0"; entries that do not fit are left out.
-    DWORD length = 0;
-    for (const auto& entry : readProfileSection(lpFileName, lpAppName))
+    std::vector<std::string> lines;
+    const Profile profile = readProfile(lpFileName);
+    const ProfileSection* entries = lpAppName ? findProfileSection(profile, lpAppName) : nullptr;
+    if (entries)
     {
-        const std::string line = entry.first + "=" + entry.second;
-        if (length + line.size() + 2 > nSize)
-            break;
-        memcpy(lpReturnedString + length, line.c_str(), line.size() + 1);
-        length += DWORD(line.size() + 1);
+        for (const auto& entry : *entries)
+            lines.push_back(entry.first + "=" + entry.second);
     }
-    lpReturnedString[length] = 0;
-    return length;
+    return copyProfileList(lines, lpReturnedString, nSize);
 }
 
+// A null section name lists the section names, a null key name the keys of the section.
 DWORD GetPrivateProfileStringA(WinApplication* app, x86::CPU& cpu,
                                LPCSTR lpAppName, LPCSTR lpKeyName, LPCSTR lpDefault, LPSTR lpReturnedString,
                                DWORD nSize, LPCSTR lpFileName)
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_ASSERT(lpAppName && lpKeyName);
-    if (nSize == 0)
+    if (!lpReturnedString || nSize == 0)
         return 0;
+    if (!lpAppName || !lpKeyName)
+    {
+        std::vector<std::string> names;
+        const Profile profile = readProfile(lpFileName);
+        if (!lpAppName)
+        {
+            for (const auto& section : profile)
+                names.push_back(section.first);
+        }
+        else if (const ProfileSection* entries = findProfileSection(profile, lpAppName))
+        {
+            for (const auto& entry : *entries)
+                names.push_back(entry.first);
+        }
+        return copyProfileList(names, lpReturnedString, nSize);
+    }
     std::string value;
     if (!readProfileValue(lpFileName, lpAppName, lpKeyName, &value))
         value = trim(lpDefault ? lpDefault : "");
@@ -1665,7 +1747,10 @@ x86::reg32 findResourceEntry(WinApplication* app, x86::reg32 directory, x86::reg
             const x86::reg32 length = app->getMemory<x86::reg16>(text);
             match = byName && strlen(name) == length;
             for (x86::reg32 c = 0; match && c < length; ++c)
-                match = x86::reg32(toupper(name[c])) == app->getMemory<x86::reg16>(text + 2 + 2 * c);
+            {
+                const x86::reg32 stored = app->getMemory<x86::reg16>(text + 2 + 2 * c);
+                match = x86::reg32(toupper(x86::reg8(name[c]))) == (stored < 0x80 ? x86::reg32(toupper(int(stored))) : stored);
+            }
         }
         else
         {
@@ -1731,18 +1816,28 @@ DWORD SizeofResource(WinApplication* app, x86::CPU& cpu,
     return hResInfo ? x86::reg32(app->getMemory<x86::reg32>(hResInfo + 4)) : 0;
 }
 
+static const HFILE HFILE_ERROR = HFILE(-1);
+
 HFILE _lclose(WinApplication* app, x86::CPU& cpu, HFILE hFile)
 {
     NFS2_USE(cpu);
-    app->freeResource(hFile);
-    return hFile;
+    return app->freeResource(hFile) ? hFile : HFILE_ERROR;
 }
 
+// OF_READ (0), OF_WRITE (1) or OF_READWRITE (2); share flags are ignored.
 HFILE _lopen(WinApplication* app, x86::CPU& cpu, LPCSTR lpPathName, int iReadWrite)
 {
     NFS2_USE(cpu);
-    NFS2_ASSERT(iReadWrite == 0);
-    win32::File* file = new win32::File(lpPathName, 0x80000000, 0, 3);
+    static const DWORD access[3] = { GENERIC_READ, GENERIC_WRITE, GENERIC_READ | GENERIC_WRITE };
+    const x86::reg32 mode = x86::reg32(iReadWrite) & 3;
+    if (mode > 2)
+        return HFILE_ERROR;
+    win32::File* file = new win32::File(lpPathName, access[mode], 0, OPEN_EXISTING);
+    if (!*file)
+    {
+        delete file;
+        return HFILE_ERROR;
+    }
     return app->allocateResource(file);
 }
 

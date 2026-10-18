@@ -34,7 +34,6 @@ class Depths:
     def __init__(self):
         self.depth = None       # per instruction, depth before it (None: unknown)
         self.local = False      # the function keeps pushed values in locals
-        self.max_depth = 0
         self.delta = None       # net pushes from entry to return, when every path agrees
 
 
@@ -113,7 +112,6 @@ def analyze_function(fn, deltas, indirect_delta):
             return result
     if uses and fn.program.local_x87:
         result.local = True
-        result.max_depth = max([d for d in result.depth if d is not None] + [0]) + 1
     return result
 
 
@@ -130,8 +128,9 @@ def fixpoint(program, fns, indirect):
                 deltas[fn.entry_address] = info.delta
                 changed = True
         if not changed:
-            break
-    return infos, deltas
+            return infos, deltas
+    # The optimistic start (never returning) is only sound once the deltas are stable.
+    raise AssertionError('x87 depth analysis did not converge')
 
 
 def analyze(program, fns):

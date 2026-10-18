@@ -190,6 +190,8 @@ AudioBuffer::AudioBuffer(AudioDevice* device, WinApplication* app, x86::reg32 bu
 {
     m_gain[0] = AudioDevice::s_unityGain;
     m_gain[1] = AudioDevice::s_unityGain;
+    // A new buffer is zeroed, as on Windows.
+    memset(&app->getMemory<x86::reg8>(m_memmap->getBlockStart()), 0, m_bufferSize);
     updateStep();
 }
 

@@ -1,4 +1,4 @@
-# Builds the VPK. Usage: tools\build.ps1 [-Config Release|Debug] [-Clean] [-Reconfigure] [-Jobs N]
+# Builds the VPK. Usage: tools/build.ps1 [-Config Release|Debug] [-Clean] [-Reconfigure] [-Jobs N]
 # Configures only when the build directory is new (Ninja re-runs CMake itself when CMake files change), then
 # rebuilds only what changed.
 param(

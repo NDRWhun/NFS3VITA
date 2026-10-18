@@ -59,7 +59,8 @@ private:
 typedef BasicLockGuard<Mutex>   LockGuard;
 typedef BasicLockGuard<LwMutex> LwLockGuard;
 
-// Bound to one mutex; wait() must be called with that mutex held.
+// Bound to one mutex; wait() must be called with that mutex held. Waits may return without a signal.
+// Timeouts are cut to about 35 minutes; wait errors other than a timeout are fatal.
 class CondVar
 {
 public:
@@ -77,6 +78,7 @@ private:
     SceUID m_id;
 };
 
+// Timeouts are cut to about 35 minutes; wait errors other than a timeout are fatal.
 class Semaphore
 {
 public:

@@ -8,20 +8,29 @@
 #include <winapi/dsound/idirectsound.h>
 #include <winapi/dsound/idirectsoundbuffer.h>
 #include <winapi/dsound/idirectsound3dlistener.h>
+#include <platform/log.h>
 
 namespace win32 { namespace com
 {
 
 
 static win32::MemMap* s_memory = nullptr;
-static x86::reg32 s_firstFreeBlock = 0;
+static x86::reg32 s_firstFreeBlock = 0;     // 0 when every block is taken
 
 x86::reg32 ComAlloc(WinApplication* app)
 {
     x86::reg32 result = s_firstFreeBlock;
+    if (!result)
+        pf::fatal("COM object memory exhausted");
     x86::reg32* memory = &app->getMemory<x86::reg32>(result);
     s_firstFreeBlock = *memory;
     return result;
+}
+
+bool isUnknown(const GUID& iid)
+{
+    static const GUID IID_IUnknown = { 0x00000000, 0x0000, 0x0000, { 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 } };
+    return iid == IID_IUnknown;
 }
 
 x86::reg32 ComGetIndex(WinApplication* app, const IUnknown* pointer)
@@ -43,7 +52,6 @@ bool InitialiseComMemory(WinApplication* app)
     s_memory = new win32::MemMap(1024*1024*1);
     x86::reg32  blockOffset = 0;
     x86::reg8* blockStart = &app->getMemory<x86::reg8>(s_memory->getBlockStart());
-    x86::reg8* blockEnd = &app->getMemory<x86::reg8>(s_memory->getBlockStart() + s_memory->getBlockSize()-1);
     blockOffset += IUnknown::init(app, s_memory->getBlockStart() + blockOffset, blockStart + blockOffset);
     blockOffset += ddraw::IDirectDraw2::init(app, s_memory->getBlockStart() + blockOffset, blockStart + blockOffset);
     blockOffset += ddraw::IDirectDrawPalette::init(app, s_memory->getBlockStart() + blockOffset, blockStart + blockOffset);
@@ -53,13 +61,14 @@ bool InitialiseComMemory(WinApplication* app)
     blockOffset += dsound::IDirectSound::init(app, s_memory->getBlockStart() + blockOffset, blockStart + blockOffset);
     blockOffset += dsound::IDirectSoundBuffer::init(app, s_memory->getBlockStart() + blockOffset, blockStart + blockOffset);
     blockOffset += dsound::IDirectSound3DListener::init(app, s_memory->getBlockStart() + blockOffset, blockStart + blockOffset);
-    s_firstFreeBlock = s_memory->getBlockStart() + blockOffset;
+    // Free list of whole blocks; the last one links to 0.
     const x86::reg32 blockSize = sizeof(IUnknown);
-    for (x86::reg8* block = blockStart + blockOffset;
-         block < blockEnd;
-         block += blockSize, blockOffset += blockSize)
+    const x86::reg32 blockCount = (s_memory->getBlockSize() - blockOffset) / blockSize;
+    s_firstFreeBlock = blockCount ? s_memory->getBlockStart() + blockOffset : 0;
+    for (x86::reg32 i = 0; i < blockCount; ++i, blockOffset += blockSize)
     {
-        *reinterpret_cast<x86::reg32*>(block) = s_memory->getBlockStart() + blockOffset + blockSize;
+        const x86::reg32 next = i + 1 < blockCount ? s_memory->getBlockStart() + blockOffset + blockSize : 0;
+        *reinterpret_cast<x86::reg32*>(blockStart + blockOffset) = next;
     }
 
     return true;
@@ -79,8 +88,7 @@ BOOL IUnknown::QueryInterface(WinApplication* app, x86::CPU& cpu,
 {
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(refiid);
-    if (*refiid == m_interface)
+    if (*refiid == m_interface || isUnknown(*refiid))
     {
         *pvvObject = ComGetIndex(app, this);
         m_refCount ++;
@@ -89,7 +97,6 @@ BOOL IUnknown::QueryInterface(WinApplication* app, x86::CPU& cpu,
     else
     {
         *pvvObject = 0;
-        //m_refCount ++;
         return 0x80004002;
     }
 }

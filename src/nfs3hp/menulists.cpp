@@ -5,12 +5,10 @@
 #include <cstring>
 
 // The frontend finds a menu item's option list by name in the table at 0x5563e8 (20-byte entries: name, label
-// word list, two callbacks, variable; a null name ends it; sub_442b90, sub_442bf0, sub_442c80). For a missing
-// name sub_442c80 logs "list not found" and calls sub_4f0120, which waits for a key forever: the Graphics, Advanced
-// Graphics, Camera and HUD menus of the staged Modern Patch data (graphics, psgraph, advgrph, camera, pscamera,
-// hud .mnu) freeze the game. Five entries that no .mnu names and no code looks up get the missing names instead.
-// mirrorlevel drives the racer's rear-view mirror (Off, On); the others have no feature in this exe and offer a
-// single Off entry on a scratch variable.
+// word list, two callbacks, variable; a null name ends it). A missing name waits for a key forever (sub_442c80),
+// which freezes the Modern Patch's Graphics, Advanced Graphics, Camera and HUD menus. Five entries that no .mnu
+// names and no code looks up get the missing names: mirrorlevel drives the racer's rear-view mirror (Off, On), the
+// others offer a single Off entry on a scratch variable.
 
 namespace nfs3hp { namespace menulists {
 

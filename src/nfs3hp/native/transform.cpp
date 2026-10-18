@@ -1,12 +1,9 @@
 // Native vertex transform and projection (sub_4bf4c0) and the matrix leaves sub_4e03b0, sub_4e0430, sub_4e0210,
 // sub_4e0280 of nfs3.exe.
 //
-// The guest runs x87 code, which the runtime emulates in double precision: every fld of a float widens it, every
-// fmul/fadd rounds to double and every fstp to a float rounds to float. The code below performs the same double
-// operations in the same order, so the results are bit-identical. Single precision is used only where it is provably
-// identical (a single double operation on two floats rounded to float: the exact product, or a double-rounded sum or
-// quotient, which equals the correctly rounded float result since 53 >= 2 * 24 + 2). Only NaN payloads can differ:
-// with two NaN operands the result payload follows the operand order the compiler picks, in both versions.
+// The emulated x87 works in double precision; the code below performs the same double operations in the same order,
+// so the results are bit-identical. Single precision is used only for one operation on two floats rounded to float,
+// which equals the double-rounded result (53 >= 2 * 24 + 2). Only NaN payloads can differ (operand order).
 
 #include "guest.h"
 

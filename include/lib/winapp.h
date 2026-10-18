@@ -145,7 +145,8 @@ class WinApplication
 {
 public:
     GenericResource* getResource(x86::reg32 resource);
-    void freeResource(x86::reg32 resource);
+    // False if no resource has the handle.
+    bool freeResource(x86::reg32 resource);
     x86::reg32 allocateResource(GenericResource* resource);
     x86::reg32 getAppName() const { return m_appName->getBlockStart(); }
     x86::reg32 getAppNameW() const { return m_appNameW->getBlockStart(); }
@@ -171,7 +172,6 @@ public:
 
     void lockContext(const x86::CPU& cpu);
     void unlockContext(const x86::CPU& cpu);
-    void unmarkContext(const x86::CPU& cpu);
 
     // Preemption point for the thread holding the execution lock: if a preempting thread waits for the lock, a
     // thread that does not preempt releases it and queues again. Every dynamic_call is one.

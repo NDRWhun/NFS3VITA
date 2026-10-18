@@ -111,7 +111,7 @@ Optional settings go in `ux0:data/nfs3vita/nfs3vita.cfg`, one `key=value` per li
 
 | Key | Default | What it does |
 |------|---------|--------------|
-| `stretch` | `1` | `0` = menus and loading screens in 4:3 with side bars |
+| `stretch` | `1` (`0` in a build from the original `nfs3.exe`) | `0` = menus and loading screens in 4:3 with side bars; `1` stretches them (and the race of a build from the original `nfs3.exe`) |
 | `resolution` | `960x544` | Another race resolution, for example `1024x768` (stretched, or 4:3 with side bars with `stretch=0`) |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -144,6 +144,9 @@ tools/generate.ps1 -Binaries binaries      # recompile the binaries into src/nfs
 tools/build.ps1                            # -> build-release/NFS3VITA.vpk; rebuilds only what changed
 tools/stage-data.ps1 -Game <game> -ModernPatch <patch> -Out vita-data   # -> contents of ux0:data/nfs3vita/
 ```
+
+`tools/stage-data.ps1` copies only the patch files the port reads; copying the whole folders as in
+[Setup](#setup-for-players) gives the same result.
 
 The original `nfs3.exe` (the upstream repository's `nfs3hp/` folder has the accepted version) still builds: races
 then render in 4:3 (up to 1024x768) with the port's own widescreen world view and the original 4:3 HUD.

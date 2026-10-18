@@ -339,18 +339,24 @@ def cg_shrd(ctx, dst, src, cnt):
 
 
 def _rotate(ctx, dst, cnt, left):
+    """The count is masked to 5 bits, then taken modulo the width: a nonzero masked count sets CF even when the value
+    comes back unchanged (8- and 16-bit rotates by a multiple of the width)."""
     bits = dst.size * 8
     t = T(bits)
     count, constant = _count(ctx, cnt)
-    if constant is not None:
-        constant %= bits
-        if constant == 0:
-            return [';']
-        count = str(constant)
-    else:
-        count = '(%s %% %d)' % (count, bits)
+    if constant == 0:
+        return [';']
     setup, cur, writer = ctx.bind(dst)
-    lines = setup + ['const %s a = %s;' % (t, cur), 'const unsigned n = %s;' % count]
+    lines = setup + ['const %s a = %s;' % (t, cur)]
+    if constant is not None:
+        lines.append('const unsigned n = %d;' % (constant % bits))
+        masked = None
+    elif bits == 32:
+        lines.append('const unsigned n = (%s %% 32);' % count)
+        masked = 'n'
+    else:
+        lines += ['const unsigned c = %s;' % count, 'const unsigned n = c %% %d;' % bits]
+        masked = 'c'
     if left:
         body = ['const %s r = %s((a << n) | (a >> (%d - n)));' % (t, t, bits)]
         cf = '((r & 1) != 0)'
@@ -360,14 +366,16 @@ def _rotate(ctx, dst, cnt, left):
         cf = '(((r >> %d) & 1) != 0)' % (bits - 1)
         of = '((((r >> %d) ^ (r >> %d)) & 1) != 0)' % (bits - 1, bits - 2)
     if constant is not None:
+        if constant % bits == 0:
+            body = ['const %s r = a;' % t]
         flags = {'cf': cf}
         if constant == 1:
             flags['of'] = of
         return block(lines + body + ctx.set_flags(flags) + writer('r'))
     body += ctx.set_flags({'cf': cf}, may=True)
-    body += ['if (n == 1)', '{'] + ['    ' + l for l in ctx.set_flags({'of': of}, may=True)] + ['}']
+    body += ['if (%s == 1)' % masked, '{'] + ['    ' + l for l in ctx.set_flags({'of': of}, may=True)] + ['}']
     body += writer('r')
-    return block(lines + ['if (n != 0)', '{'] + ['    ' + l for l in body] + ['}'])
+    return block(lines + ['if (%s != 0)' % masked, '{'] + ['    ' + l for l in body] + ['}'])
 
 
 def cg_rol(ctx, dst, cnt):
@@ -521,13 +529,13 @@ def cg_popfd(ctx):
 
 
 def cg_pushf(ctx):
-    return ctx.sync_flags_to_cpu() + block(['const x86::reg32 s = %s - 4;' % ctx.reg('esp')] +
+    return ctx.sync_flags_to_cpu() + block(['const x86::reg32 s = %s - 2;' % ctx.reg('esp')] +
                                                   ctx.store(16, 's', 'cpu.flags.word') + ctx.set_reg('esp', 's'))
 
 
 def cg_popf(ctx):
     return ['cpu.flags.word = %s;' % ctx.load(16, ctx.reg('esp'))] + \
-        ctx.set_reg('esp', '%s + 4' % ctx.reg('esp')) + ctx.load_flags_from_cpu()
+        ctx.set_reg('esp', '%s + 2' % ctx.reg('esp')) + ctx.load_flags_from_cpu()
 
 
 def cg_setcc(ctx, dst, cc):
@@ -536,16 +544,22 @@ def cg_setcc(ctx, dst, cc):
 
 # ---- stack ----------------------------------------------------------------------------------------------------
 
+def stack_slot(ins):
+    """Bytes push/pop move esp by: 2 with an operand-size prefix, else 4 (segment registers too)."""
+    return 2 if ins.prefix[2] == 0x66 else 4
+
+
 def cg_push(ctx, value):
     bits = value.size * 8
     return block(['const %s v = %s;' % (T(bits), ctx.val(value)),
-                  'const x86::reg32 s = %s - 4;' % ctx.reg('esp')] + ctx.store(bits, 's', 'v') + ctx.set_reg('esp', 's'))
+                  'const x86::reg32 s = %s - %d;' % (ctx.reg('esp'), stack_slot(ctx.ins))] +
+                 ctx.store(bits, 's', 'v') + ctx.set_reg('esp', 's'))
 
 
 def cg_pop(ctx, dst):
     bits = dst.size * 8
     return block(['const %s v = %s;' % (T(bits), ctx.load(bits, ctx.reg('esp')))] +
-                 ctx.set_reg('esp', '%s + 4' % ctx.reg('esp')) + ctx.put(dst, 'v'))
+                 ctx.set_reg('esp', '%s + %d' % (ctx.reg('esp'), stack_slot(ctx.ins))) + ctx.put(dst, 'v'))
 
 
 def cg_pushal(ctx):

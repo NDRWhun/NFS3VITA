@@ -18,8 +18,8 @@ in it stays with its author. The terms for redistributing it are to be agreed wi
 
 ## pefile
 
-`tools/recompiler/disasm/pefile.py` and `tools/recompiler/disasm/ordlookup/`, from the pefile project (Ero Carrera),
-MIT License, as bundled upstream.
+`tools/recompiler/disasm/pefile.py` and `tools/recompiler/disasm/ordlookup/`, from the pefile project (Ero Carrera,
+version 2018.8.8), MIT License, as bundled upstream. The license text is in `tools/recompiler/disasm/LICENSE.pefile`.
 
 ## Need for Speed III: Hot Pursuit
 

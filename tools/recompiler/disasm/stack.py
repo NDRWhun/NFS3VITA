@@ -11,6 +11,7 @@ any compiler assumes; stores through pointers derived from esp/ebp with an unkno
 from capstone import x86 as X
 
 from .codegen import ctx as C
+from .codegen.integer import stack_slot
 
 ESP = ('esp',)
 
@@ -114,16 +115,19 @@ def analyze_function(fn, infos):
             regs['esp'] = ('esp', esp[1] + pop) if esp and esp[1] == 0 else None
             handled = True
         elif mnemonic == 'push' and esp:
+            size = stack_slot(ins)
             value = reg_symbol(regs, ins, ins.operands[0]) if ins.operands[0].size == 4 else None
-            store(slots, ('esp', esp[1] - 4), 4, value)
-            regs['esp'] = ('esp', esp[1] - 4)
+            store(slots, ('esp', esp[1] - size), size, value)
+            regs['esp'] = ('esp', esp[1] - size)
             handled = True
         elif mnemonic == 'pop' and esp and ins.operands[0].type == X.X86_OP_REG:
             name = ins.reg_name(ins.operands[0].reg)
             value = slots.get(esp[1])
-            regs['esp'] = ('esp', esp[1] + 4)
+            regs['esp'] = ('esp', esp[1] + stack_slot(ins))
             if name in C.REGS:
                 regs[name] = value
+            elif name in C.SUBREGS:
+                regs[C.SUBREGS[name][0]] = None
             handled = True
         elif mnemonic == 'mov' and ins.operands[0].type == X.X86_OP_REG and ins.operands[0].size == 4:
             name = ins.reg_name(ins.operands[0].reg)
@@ -225,7 +229,8 @@ def analyze_function(fn, infos):
 
 
 def analyze(program, fns):
-    """StackInfo per function entry; iterates from no knowledge until the summaries stop changing."""
+    """StackInfo per function entry; iterates from no knowledge until the summaries stop changing. Each round
+    only refines summaries that are already sound, so stopping at the round limit is conservative."""
     infos = {}
     changed = True
     rounds = 0

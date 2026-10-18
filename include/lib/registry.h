@@ -23,7 +23,6 @@ class RegistryValue : public GenericResource
 {
 public:
     RegistryValue(x86::reg32 value);
-    RegistryValue(x86::reg64 value);
     RegistryValue(const std::string& value);
 
     x86::reg32 query(x86::reg32* type, void* data, x86::reg32* dataSize);

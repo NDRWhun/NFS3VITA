@@ -4,16 +4,12 @@
 #include <lib/winapp.h>
 #include <platform/log.h>
 
-// sub_48ed30 is nfs3.exe's only timeSetEvent callback. It ignores its arguments, keeps its own schedule and re-arms
-// itself as a one-shot timer on every fire, then wakes the master tick thread and two service threads (each
-// guest word below is an aligned dword). The setup (sub_48eff0) primes it with a direct guest call, whose
-// timeSetEvent then arms this native version. On Windows it runs on winmm's time-critical thread without any lock;
-// here it runs on the timer thread without the execution lock, reading and writing the guest words atomically.
-//
-// One addition keeps every tick: guest threads only run with the execution lock, so the tick thread may still be
-// busy with the previous tick when the next one is due. While the tick event is still set, the fire is retried 1 ms
-// later without advancing the schedule, which then catches up at 1 kHz as the guest callback did when it waited
-// for the lock.
+// sub_48ed30, nfs3.exe's only timeSetEvent callback, natively: it advances its own schedule, re-arms itself as a
+// one-shot timer while the timer runs, then wakes the master tick thread and two service threads. It runs on the
+// timer thread without the execution lock and accesses the guest words (aligned dwords) atomically. The setup
+// (sub_48eff0) primes it with a direct guest call, whose timeSetEvent then arms this version.
+// While the tick event is still set (the tick thread has not run yet), the fire is retried 1 ms later without
+// advancing the schedule, so no tick is lost; the schedule then catches up at 1 kHz.
 
 namespace nfs3hp { namespace mastertimer {
 
@@ -43,10 +39,14 @@ void store(win32::WinApplication* app, x86::reg32 address, x86::reg32 value)
 }
 
 // timeSetEvent(delay, 1, sub_48ed30, 0, TIME_ONESHOT). It only fails during shutdown, so the guest's stop on failure
-// is left out.
+// is left out. The stop (sub_48ef50) reads the timer id, clears Running and kills that id; a timer armed here after
+// it read the id would stay pending, so it is killed when Running reads 0 after the arm.
 void arm(win32::WinApplication* app, x86::reg32 delayMs)
 {
-    store(app, TimerId, win32::Timer::set(app, delayMs, Callback, 0));
+    const x86::reg32 id = win32::Timer::set(app, delayMs, Callback, 0);
+    store(app, TimerId, id);
+    if (load(app, Running) == 0)
+        win32::Timer::kill(id);
 }
 
 // The tick event, or 0 when ticks are paused or the tick thread has none.

@@ -78,13 +78,38 @@ def align(application, section, current_address):
             elif skipped_code in nops:
                 current_address = new_current_address
             else:
-                #print('oops: 0x%08x %s' % (current_address, ''.join('%02x'%c for c in skipped_code)))
                 skipped_code = ''
     return (current_address, skipped_code)
 
 
-def disassemble(name, exe_path, data_segments=[], known_subroutines=[], split_instructions=[],
-                thread_routines=[], thread_segments=[], merge_hints=[], skip_instructions=[],
+def decode_subroutine(disassembler, application, section, start, split_instructions, subroutine):
+    """Adds instructions from start until the subroutine ends; returns the address after it. Decodes in
+    windows, so a subroutine may be any size; an undecodable byte or the section end also ends it."""
+    end = application.get_address_end(section)
+    address = start
+    while address < end:
+        window = application.read_section_data(section, address, min(address + 8192, end))
+        decoded = False
+        for instruction in disassembler.disasm(window, address):
+            decoded = True
+            address = instruction.address + instruction.size
+            next_address = subroutine.add_instruction(instruction)
+            if next_address:
+                return next_address
+            for split_instruction in split_instructions:
+                if instruction.address < split_instruction < address:
+                    subroutine.add_split_instruction(split_instruction)
+                    data = application.read_section_data(section, split_instruction, address)
+                    for extra_inst in disassembler.disasm(data, split_instruction):
+                        subroutine.add_instruction(extra_inst)
+        if not decoded:
+            print('Invalid instruction at address 0x%08x' % address)
+            return address + 1
+    print('End of section at address 0x%08x' % address)
+    return address
+
+
+def disassemble(name, exe_path, data_segments=[], known_subroutines=[], split_instructions=[], merge_hints=[],
                 type=Application, rebase_after=None, skip_nop_runs=False):
     disassembler = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     disassembler.detail = True
@@ -94,68 +119,43 @@ def disassemble(name, exe_path, data_segments=[], known_subroutines=[], split_in
         rebase_address = rebase_after.end_address()
     application = type(name, exe_path, rebase_address)
 
-    subroutines_to_check = []
-    found_subroutines = known_subroutines[:]
-
     for section in application.get_code_sections():
         current_address = application.get_address(section)
-        try:
-            while current_address < application.get_address_end(section):
-                data_blob = ''
-                jump_table = []
-                labels = []
+        while current_address < application.get_address_end(section):
+            data_blob = ''
+            jump_table = []
 
-                current_address, skipped_code = realign(application, section, current_address, skip_nop_runs)
-                for data_segment in data_segments:
-                    if data_segment[0] == current_address:
-                        current_address = data_segment[1]
-                        data_blob = application.read_section_data(section, data_segment[0], data_segment[1])
+            current_address, skipped_code = realign(application, section, current_address, skip_nop_runs)
+            for data_segment in data_segments:
+                if data_segment[0] == current_address:
+                    current_address = data_segment[1]
+                    data_blob = application.read_section_data(section, data_segment[0], data_segment[1])
 
-                x = application.get_dword(current_address)
-                y = application.get_dword(current_address + 4)
-                if application.is_code_address(x) and application.is_code_address(y):
-                    while application.is_code_address(x):
-                        current_address += 4
-                        x = application.get_dword(current_address)
-                for data_segment in data_segments:
-                    if data_segment[0] == current_address:
-                        current_address = data_segment[1]
-                        data_blob = application.read_section_data(section, data_segment[0], data_segment[1])
+            x = application.get_dword(current_address)
+            y = application.get_dword(current_address + 4)
+            if application.is_code_address(x) and application.is_code_address(y):
+                while application.is_code_address(x):
+                    current_address += 4
+                    x = application.get_dword(current_address)
+            for data_segment in data_segments:
+                if data_segment[0] == current_address:
+                    current_address = data_segment[1]
+                    data_blob = application.read_section_data(section, data_segment[0], data_segment[1])
 
-                if current_address >= application.get_address_end(section):
-                    break
+            if current_address >= application.get_address_end(section):
+                break
 
-                current_address, skipped_code_2 = realign(application, section, current_address, skip_nop_runs)
-                skipped_code = skipped_code_2 or skipped_code
+            current_address, skipped_code_2 = realign(application, section, current_address, skip_nop_runs)
+            skipped_code = skipped_code_2 or skipped_code
 
-                if current_address >= application.get_address_end(section):
-                    break
+            if current_address >= application.get_address_end(section):
+                break
 
-                #print('subroutine start [0x%08x]' % current_address)
-                instructions = [x for x in application.read_section_data(section, current_address, current_address + 2)]
-                if instructions[0] < 0x51 or instructions[0] > 0x57 or instructions[1] < 0x51 or instructions[1] > 0x57:
-                    subroutines_to_check.append(current_address)
-
-                code_part = application.read_section_data(section, current_address, current_address+8192)
-                if code_part:
-                    subroutine = Subroutine(application, section, skipped_code, data_blob, jump_table, current_address in thread_routines)
-                    for instruction in disassembler.disasm(code_part, current_address):
-                        current_address = subroutine.add_instruction(instruction)
-                        if current_address:
-                            break
-                        for split_instruction in split_instructions:
-                            if instruction.address < split_instruction and instruction.address + instruction.size > split_instruction:
-                                subroutine.add_split_instruction(split_instruction)
-                                for extra_inst in disassembler.disasm(application.read_section_data(section, split_instruction, instruction.address + instruction.size), split_instruction):
-                                    subroutine.add_instruction(extra_inst)
-                    else:
-                        print('Invalid instruction or end of stream at address 0x%08x' % (instruction.address + instruction.size))
-                        current_address = instruction.address + instruction.size + 1
-                    application.add_subroutine(subroutine)
-                else:
-                    break
-        except KeyboardInterrupt:
-            pass
+            subroutine = Subroutine(application, section, skipped_code, data_blob, jump_table)
+            current_address = decode_subroutine(disassembler, application, section, current_address,
+                                                split_instructions, subroutine)
+            if subroutine.instructions:
+                application.add_subroutine(subroutine)
 
     application.reduce_subroutines(merge_hints)
     application.split_subroutines(known_subroutines)

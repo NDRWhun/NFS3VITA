@@ -4,7 +4,10 @@ from .subroutine import Subroutine
 import ordlookup
 
 
+# Fake addresses of imported functions, one per import across all modules: the import thunks are patched to point
+# there and the runtime registers its shims at them. They must stay in nfs3.exe's header page, below its code.
 address = 0x400a00
+FAKE_IMPORT_END = 0x401000
 
 
 def _do_import(section, index, offset, base):
@@ -14,9 +17,6 @@ def _do_import(section, index, offset, base):
         end = o
         while section[end] != 0: end += 1
         return section[o:end]
-    def read_word(o):
-        return section[o]         + \
-                section[o+1] * 2**8
     def read_dword(o):
         return section[o]           + \
                 section[o+1] * 2**8  + \
@@ -30,8 +30,6 @@ def _do_import(section, index, offset, base):
     dlls = []
     while True:
         table_offset = read_dword(index + 0)
-        ts = read_dword(index + 4)
-        forwarder = read_dword(index + 8)
         dll_name_offset = read_dword(index + 12)
         thunk_table = read_dword(index + 16)
         index += 20
@@ -44,15 +42,14 @@ def _do_import(section, index, offset, base):
         methods = []
         characteristics = read_dword(table_offset)
         while characteristics:
+            if address >= FAKE_IMPORT_END:
+                raise AssertionError('fake import addresses reach 0x%x' % FAKE_IMPORT_END)
             if characteristics & 0x80000000:
-                #print('index: %d' % (characteristics & 0xffff))
                 funcname = ordlookup.ordLookup(dll_name + b'.dll', characteristics & 0xffff)
                 print('%d->%s' % (characteristics & 0xffff, funcname))
                 methods.append((funcname, address))
             else:
-                i = read_word(characteristics - offset)
                 name = read_name(characteristics - offset + 2)
-                #print('name: %d (%s)' % (i, name))
                 methods.append((name, address))
                 print('0x%x -> %s' % (offset + thunk_table + base, name))
             section = write_dword(thunk_table, address)
@@ -60,7 +57,6 @@ def _do_import(section, index, offset, base):
             table_offset += 4
             thunk_table += 4
             characteristics = read_dword(table_offset)
-        #print(read_word(name_table_offset))
         dlls.append((dll_name, methods))
     return dlls, section
 
@@ -107,7 +103,7 @@ def _reduce(subroutines, found_subroutines, merge_hints):
             if subroutine2.instructions[0].address in found_subroutines:
                 # call leading there, so can't merge with subroutine
                 index += 1
-            elif subroutine2.skipped_blob: #and sum(ord(x) for x in subroutine2.skipped_blob) == 0:
+            elif subroutine2.skipped_blob:
                 # seems to have a skip alignment prefix, so should be legit call
                 # TODO: catch?
                 index += 1
@@ -189,20 +185,17 @@ class Module:
         if address is None:
             return False
         for s in self.sections:
-            if s[5]:
-                if address >= self.sections[0][1] and address < self.sections[0][1] + self.sections[0][2]:
-                    return True
+            if s[5] and s[1] <= address < s[1] + s[2]:
+                return True
         return False
 
     def get_dword(self, address):
+        """Dword at address (bytes past the end of the section read as 0), or None outside every section."""
         for section_data, section_address, section_length, section_name, ro, code in self.sections:
             if address >= section_address and address < section_address + section_length:
                 if section_data:
-                    dword_blob = section_data[address-section_address : address-section_address+4]
-                    return (dword_blob[0])         + \
-                            (dword_blob[1]) * 2**8  + \
-                            (dword_blob[2]) * 2**16 + \
-                            (dword_blob[3]) * 2**24
+                    offset = address - section_address
+                    return int.from_bytes(section_data[offset:offset + 4].ljust(4, b'\0'), 'little')
                 else:
                     return 0
 

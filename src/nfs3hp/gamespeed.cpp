@@ -3,9 +3,9 @@
 #include <platform/log.h>
 #include <platform/perf.h>
 
-// Race time in nfs3.exe (docs/GAMESPEED.md): the 128 Hz master timer thread counts ticks, every 4th tick wakes the
-// input thread, which queues one input frame per wake-up, and the race loop runs two 64 Hz simulation steps per
-// queued input frame. The counters are read without the execution lock; aligned words, only used for the log.
+// Race time in nfs3.exe: the 128 Hz master timer thread counts ticks, every 4th tick wakes the input thread, which
+// queues one input frame per wake-up, and the race loop runs two 64 Hz simulation steps per queued input frame.
+// The counters are read without the execution lock; aligned words, only used for the log.
 
 namespace nfs3hp { namespace gamespeed {
 

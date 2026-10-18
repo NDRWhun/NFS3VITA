@@ -30,9 +30,12 @@ int          _newlib_heap_size_user      = 64 * 1024 * 1024;
 unsigned int sceUserMainThreadStackSize  = 4 * 1024 * 1024;
 }
 
-static const char* s_dataDirectory = "ux0:data/nfs3vita/";
-static const char* s_logFile = "ux0:data/nfs3vita/nfs3vita.log";
-static const char* s_installWin = "ux0:data/nfs3vita/install.win";
+// Game data, settings and log.
+#define DATA_DIRECTORY "ux0:data/nfs3vita"
+
+static const char* s_dataDirectory = DATA_DIRECTORY "/";
+static const char* s_logFile = DATA_DIRECTORY "/nfs3vita.log";
+static const char* s_installWin = DATA_DIRECTORY "/install.win";
 
 // The retail installer wrote install.win; the game refuses to start without it.
 // One path per line (index = meaning, all read by nfs3.exe):
@@ -89,7 +92,7 @@ static void ensureInstallWin()
 // The CD check probes "<drive>:NFS3.EXE"; drive paths resolve to the data directory.
 static void ensureCdMarker()
 {
-    static const char* marker = "ux0:data/nfs3vita/nfs3.exe";
+    static const char* marker = DATA_DIRECTORY "/nfs3.exe";
     struct stat st;
     if (stat(marker, &st) == 0)
         return;
@@ -122,13 +125,13 @@ int main(int, char**)
     scePowerSetGpuXbarClockFrequency(166);
 
     mkdir("ux0:data", 0777);
-    mkdir("ux0:data/nfs3vita", 0777);
-    mkdir("ux0:data/nfs3vita/carspecs", 0777); // player car setups written by the game
+    mkdir(DATA_DIRECTORY, 0777);
+    mkdir(DATA_DIRECTORY "/carspecs", 0777); // player car setups written by the game
     pf::logInit(s_logFile);
     pf::logInfo("NFS3VITA starting");
     x86::mmxSelfTest();
     x86::fpuSelfTest();
-    pf::Config::load("ux0:data/nfs3vita/nfs3vita.cfg");
+    pf::Config::load(DATA_DIRECTORY "/nfs3vita.cfg");
     pf::perf::init(pf::Config::getBool("perf_log", false));
 
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);

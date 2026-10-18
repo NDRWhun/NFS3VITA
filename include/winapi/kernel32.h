@@ -243,7 +243,7 @@ LONG UnhandledExceptionFilter(WinApplication* app, x86::CPU& cpu,
 BOOL UnmapViewOfFile(WinApplication* app, x86::CPU& cpu,
                      Packed<const void> lpBaseAddress);
 x86::reg32 VirtualAlloc(WinApplication* app, x86::CPU& cpu,
-                        LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect);
+                        Packed<void> lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect);
 BOOL VirtualFree(WinApplication* app, x86::CPU& cpu,
                  Packed<void> lpAddress, SIZE_T dwSize, DWORD dwFreeType);
 BOOL VirtualProtect(WinApplication* app, x86::CPU& cpu,

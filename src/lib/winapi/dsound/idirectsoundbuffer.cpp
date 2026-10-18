@@ -123,7 +123,7 @@ BOOL IDirectSoundBuffer::QueryInterface(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(refiid);
-    if (*refiid == IID_IDirectSoundBuffer)
+    if (*refiid == IID_IDirectSoundBuffer || com::isUnknown(*refiid))
     {
         *pvvObject = ComGetIndex(app, this);
         m_refCount ++;
@@ -138,7 +138,6 @@ BOOL IDirectSoundBuffer::QueryInterface(WinApplication* app, x86::CPU& cpu,
     else
     {
         *pvvObject = 0;
-        //m_refCount ++;
         return 0x80004002;
     }
 }

@@ -12,6 +12,8 @@ param.sfo
 /src/nfs3hp/disassembly/
 
 # Original game binaries and data are never tracked
+/binaries/
+/vita-data/
 *.exe
 *.dll
 *.EXE

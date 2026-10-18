@@ -2,6 +2,7 @@
 #include <x86.h>
 #include <lib/window.h>
 #include <platform/log.h>
+#include <atomic>
 #include <cctype>
 
 namespace win32 { namespace user32
@@ -186,13 +187,7 @@ LRESULT DefWindowProcA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(wParam);
     NFS2_USE(lParam);
     if (Msg == 0x0002)
-    {
         app->freeResource(hWnd);
-    }
-    else
-    {
-        //NFS2_ASSERT(false);
-    }
     return 0;
 }
 
@@ -238,7 +233,6 @@ HWND FindWindowA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(cpu);
     NFS2_USE(lpClassName);
     NFS2_USE(lpWindowName);
-    //NFS2_ASSERT(false);
     return 0;
 }
 
@@ -248,7 +242,6 @@ SHORT GetAsyncKeyState(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(vKey);
-    //NFS2_ASSERT(false);
     return 0;
 }
 
@@ -305,9 +298,7 @@ int GetKeyboardType(WinApplication* app, x86::CPU& cpu,
 BOOL GetMessageA(WinApplication* app, x86::CPU& cpu,
                  LPMSG lpMsg, HWND  hWnd, UINT  wMsgFilterMin, UINT  wMsgFilterMax)
 {
-    NFS2_USE(cpu);
-    NFS2_USE(hWnd);
-    win32::Window* window = lpMsg->hWindow ? dynamic_cast<win32::Window*>(app->getResource(lpMsg->hWindow)) : nullptr;
+    win32::Window* window = hWnd ? dynamic_cast<win32::Window*>(app->getResource(hWnd)) : nullptr;
     app->unlockContext(cpu);
     BOOL result = win32::Window::getMessage(cpu, lpMsg, window, wMsgFilterMin, wMsgFilterMax);
     app->lockContext(cpu);
@@ -509,14 +500,14 @@ HHOOK SetWindowsHookExA(WinApplication* app, x86::CPU& cpu,
     return 0;
 }
 
+// The display counter of the cursor, which is never drawn; it starts at 0 as with a mouse installed.
 int ShowCursor(WinApplication* app, x86::CPU& cpu,
                BOOL bShow)
 {
-    // TODO?
     NFS2_USE(app);
     NFS2_USE(cpu);
-    NFS2_USE(bShow);
-    return 0;
+    static std::atomic<int> s_displayCount{0};
+    return bShow ? ++s_displayCount : --s_displayCount;
 }
 
 BOOL ShowWindow(WinApplication* app, x86::CPU& cpu,
@@ -578,7 +569,6 @@ BOOL UnhookWindowsHookEx(WinApplication* app, x86::CPU& cpu,
 void keybd_event(WinApplication* app, x86::CPU& cpu,
                  BYTE bVk, BYTE bScan, DWORD dwFlags, ULONG_PTR dwExtraInfo)
 {
-    //NFS2_ASSERT(false);
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(bVk);

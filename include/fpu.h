@@ -4,6 +4,7 @@
 #include <x86.h>
 #include <cstring>
 #include <cmath>
+#include <limits>
 
 //#define NFS2SE_X87_DEBUG 1
 
@@ -359,6 +360,22 @@ namespace x86
             return result;
         }
         return roundIntegralLibm(value, mode);
+    }
+
+    // fist/fistp of an integral value: NaN and values out of range give the integer indefinite (the most negative
+    // value, which -2^(bits-1) converts to as well), as on x86 with the invalid exception masked. T is sreg16, sreg32
+    // or sreg64.
+    template <typename T>
+    inline T fistInteger(double value)
+    {
+        // |value| < 2^(bits-1) exactly when the biased exponent is below 1023 + bits - 1; NaN and infinities are not.
+        // An integer test avoids an FPSCR transfer.
+        constexpr uint32_t limit = uint32_t(1023 + 8 * sizeof(T) - 1) << 20;
+        uint64_t bits;
+        memcpy(&bits, &value, sizeof(bits));
+        if (__builtin_expect((uint32_t(bits >> 32) & 0x7fffffffu) < limit, 1))
+            return T(value);
+        return std::numeric_limits<T>::min();
     }
 
     // Compares roundIntegral with libm on edge cases and a pseudo-random sweep; logs mismatches.

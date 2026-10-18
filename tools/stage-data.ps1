@@ -1,5 +1,5 @@
 # Builds the game data folder for the Vita: copy the result to ux0:data/nfs3vita/ (VitaShell or FTP).
-# Usage: tools\stage-data.ps1 -Game <installed game or CD folder> [-ModernPatch <extracted Modern Patch 1.6.1>] -Out <dir>
+# Usage: tools/stage-data.ps1 -Game <installed game or CD folder> [-ModernPatch <extracted Modern Patch 1.6.1>] -Out <dir>
 # -Game must hold the fedata and gamedata folders. -ModernPatch adds the patch's data files, which builds generated
 # from the patch's nfs3.exe need.
 param(
@@ -21,16 +21,17 @@ foreach ($folder in 'fedata', 'gamedata') {
 Write-Host "Copied the game data from $Game"
 
 if ($ModernPatch) {
-    # drivers\nglide is the renderer the patch's nfs3.ini selects; the port only checks that its voodoo2a.dll exists
+    # The patch files the port reads (copying the patch's whole drivers, fedata and gamedata folders works as well).
+    # drivers/nglide is the renderer the patch's nfs3.ini selects; the port only checks that its voodoo2a.dll exists
     # and runs its own Voodoo 2 driver.
     $files = @(
         'nfs3.ini',
-        'drivers\nglide\thrash.ini',
-        'drivers\nglide\voodoo2a.dll',
-        'fedata\menus\*.mnu',
-        'fedata\text\text.*',
-        'fedata\art\logos.qfs',
-        'gamedata\dashhud\hud98.fsh'
+        'drivers/nglide/thrash.ini',
+        'drivers/nglide/voodoo2a.dll',
+        'fedata/menus/*.mnu',
+        'fedata/text/text.*',
+        'fedata/art/logos.qfs',
+        'gamedata/dashhud/hud98.fsh'
     )
     $copied = 0
     foreach ($pattern in $files) {

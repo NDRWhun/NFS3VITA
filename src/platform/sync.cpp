@@ -7,6 +7,30 @@
 namespace pf
 {
 
+namespace
+{
+
+// Longest kernel wait timeout used, in microseconds.
+const uint32_t MaxTimeoutUs = 0x7fffffff;
+
+SceUInt timeoutUs(uint32_t milliseconds)
+{
+    const uint64_t us = uint64_t(milliseconds) * 1000u;
+    return us == 0 ? 1 : us > MaxTimeoutUs ? MaxTimeoutUs : SceUInt(us);
+}
+
+// True when a wait got the object, false on timeout; fatal on any other error.
+bool waitResult(int result, const char* function)
+{
+    if (result == int(SCE_KERNEL_ERROR_WAIT_TIMEOUT))
+        return false;
+    if (result < 0)
+        fatal("%s failed: 0x%08x", function, result);
+    return true;
+}
+
+}
+
 Mutex::Mutex(const char* name, bool recursive)
     :   m_id(sceKernelCreateMutex(name, recursive ? SCE_KERNEL_MUTEX_ATTR_RECURSIVE : 0, 0, nullptr))
 {
@@ -95,15 +119,13 @@ CondVar::~CondVar()
 
 void CondVar::wait()
 {
-    sceKernelWaitCond(m_id, nullptr);
+    waitResult(sceKernelWaitCond(m_id, nullptr), "sceKernelWaitCond");
 }
 
 bool CondVar::waitFor(uint32_t milliseconds)
 {
-    unsigned int timeout = milliseconds * 1000u;
-    if (timeout == 0)
-        timeout = 1;
-    return sceKernelWaitCond(m_id, &timeout) == 0;
+    SceUInt timeout = timeoutUs(milliseconds);
+    return waitResult(sceKernelWaitCond(m_id, &timeout), "sceKernelWaitCond");
 }
 
 void CondVar::signal()
@@ -130,23 +152,21 @@ Semaphore::~Semaphore()
 
 void Semaphore::wait()
 {
-    sceKernelWaitSema(m_id, 1, nullptr);
+    waitResult(sceKernelWaitSema(m_id, 1, nullptr), "sceKernelWaitSema");
 }
 
 bool Semaphore::waitFor(uint32_t milliseconds)
 {
-    SceUInt timeout = milliseconds * 1000u;
-    if (timeout == 0)
-        timeout = 1;
-    return sceKernelWaitSema(m_id, 1, &timeout) == 0;
+    SceUInt timeout = timeoutUs(milliseconds);
+    return waitResult(sceKernelWaitSema(m_id, 1, &timeout), "sceKernelWaitSema");
 }
 
 bool Semaphore::waitForUs(uint32_t microseconds)
 {
     if (microseconds == 0)
         return tryWait();
-    SceUInt timeout = microseconds;
-    return sceKernelWaitSema(m_id, 1, &timeout) == 0;
+    SceUInt timeout = microseconds > MaxTimeoutUs ? MaxTimeoutUs : microseconds;
+    return waitResult(sceKernelWaitSema(m_id, 1, &timeout), "sceKernelWaitSema");
 }
 
 bool Semaphore::tryWait()

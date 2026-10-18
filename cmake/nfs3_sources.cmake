@@ -24,7 +24,6 @@ set(NFS3_LIB_SOURCES
   src/lib/library.cpp
   src/lib/mutex.cpp
   src/lib/palette.cpp
-  src/lib/process.cpp
   src/lib/registry.cpp
   src/lib/renderer.cpp
   src/lib/socket.cpp

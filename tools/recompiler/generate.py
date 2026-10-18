@@ -5,13 +5,20 @@ Usage: generate.py --binaries <dir> --out <dir>
 <dir> must hold nfs3.exe, eacsnd.dll, softtria.dll and voodoo2a.dll. The SHA-256 of nfs3.exe selects the binary set
 (the original game or the Modern Patch 1.6.1); every file is checked against that set because the address tables
 below only fit these exact files.
+
+Files in the output directory are replaced only when their content changes; generated files that are no longer
+produced are deleted, other files are left alone.
 """
 
 import argparse
+import filecmp
 import hashlib
 import json
 import os
+import re
+import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'disasm'))
 from disasm import analysis, disassembler, dll
@@ -56,9 +63,7 @@ ORIGINAL_DATA_SEGMENTS = [(0x401004, 0x401010),
                           (0x488030, 0x4880b0),
                           (0x489630, 0x4896f0),
                           (0x491110, 0x491120),
-                          (0x493360, 0x493380),
                           (0x493370, 0x493380),
-                          (0x49e060, 0x49e080),
                           (0x4975b0, 0x497620),
                           (0x49c3e0, 0x49c410),
                           (0x49e060, 0x49e080),
@@ -67,7 +72,6 @@ ORIGINAL_DATA_SEGMENTS = [(0x401004, 0x401010),
                           (0x4a6f80, 0x4a7080),
                           (0x4af3b0, 0x4b0700),
                           (0x4b5580, 0x4b56d0),
-                          (0x4b6a10, 0x4b6a10),
                           (0x4b7a10, 0x4b7a60),
                           (0x4c9a70, 0x4c9a80),
                           (0x4d0650, 0x4d06f0),
@@ -135,6 +139,11 @@ MERGE_ROUTINES = [(0x405740, 0x405791),
                   (0x420840, 0x420aac),
                   (0x420840, 0x420b53),]
 
+# Names of the files the generator writes: <module>.cpp/.h, <module>.<n>.cpp (functions), <module>.<section>.cpp
+# (section data) and the layout header.
+GENERATED_FILE = re.compile(r'^(%s)(\.\w+)?\.(cpp|h)$|^nfs3hp_layout\.h$'
+                            % '|'.join(['nfs3hp'] + [name for name, _, _, _, _ in DLLS]))
+
 SPLIT_INSTRUCTIONS = [0x4e08af, 0x4e087a, 0x4eee0f]
 
 
@@ -145,13 +154,11 @@ FLAGS_PRESERVED = [0x50ea68]
 NOT_CODE = [0x47bbb8]
 
 # Guest functions replaced by hand-written native code (native::sub_<address>); the translated body stays as
-# sub_<address>_guest for NFS3_NATIVE_VERIFY builds.
+# sub_<address>_guest, which the game does not call (test tools do).
 NATIVE_OVERRIDES = [0x4ea4f0, 0x5033e4, 0x5033e5, 0x4e070c, 0x4e0716, 0x4e0721,
                     0x4bf4c0, 0x4e03b0, 0x4e0430, 0x4e0210, 0x4e0280,
                     0x4c12e0, 0x4c2cd0,
                     0x4beb20]     # view rect read: the Modern Patch loading screen (src/nfs3hp/loadingscreen.cpp)
-
-THREAD_ROUTINES = []
 
 
 def sha256(path):
@@ -233,6 +240,24 @@ def write_layout(out_dir, binary_set, application, dlls):
         f.write('\n'.join(lines))
 
 
+def sync_output(stage, out_dir):
+    """Copies the files generated in stage whose content changed (unchanged files keep their timestamps, so the build
+    recompiles just the changed ones) and deletes generated files of earlier runs; other files are left alone."""
+    names = set(os.listdir(stage))
+    changed = removed = 0
+    for name in sorted(names):
+        assert GENERATED_FILE.match(name), name
+        target = os.path.join(out_dir, name)
+        if not os.path.isfile(target) or not filecmp.cmp(os.path.join(stage, name), target, shallow=False):
+            shutil.copyfile(os.path.join(stage, name), target)
+            changed += 1
+    for name in os.listdir(out_dir):
+        if name not in names and GENERATED_FILE.match(name) and os.path.isfile(os.path.join(out_dir, name)):
+            os.remove(os.path.join(out_dir, name))
+            removed += 1
+    print('generated %d files into %s (%d changed, %d removed)' % (len(names), out_dir, changed, removed))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--binaries', required=True, help='directory with the game binaries')
@@ -252,8 +277,7 @@ def main():
         return os.path.join(args.binaries, name)
 
     application = disassembler.disassemble('nfs3hp', binary('nfs3.exe'), binary_set.data_segments,
-                                           binary_set.known_subroutines, SPLIT_INSTRUCTIONS,
-                                           THREAD_ROUTINES, binary_set.thread_segments, MERGE_ROUTINES,
+                                           binary_set.known_subroutines, SPLIT_INSTRUCTIONS, MERGE_ROUTINES,
                                            skip_nop_runs=binary_set.skip_nop_runs)
     dlls = []
     previous = application
@@ -271,8 +295,10 @@ def main():
                                local_x87=not args.memory_x87,
                                memory_functions=read_addresses(args.memory_functions))
     program.analyze()
-    application.write(args.out, program, dlls=dlls)
-    write_layout(args.out, binary_set, application, dlls)
+    with tempfile.TemporaryDirectory(prefix='nfs3gen-') as stage:
+        application.write(stage, program, dlls=dlls)
+        write_layout(stage, binary_set, application, dlls)
+        sync_output(stage, args.out)
     if args.analysis:
         write_analysis(args.analysis, program, [application] + dlls)
 

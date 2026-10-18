@@ -283,7 +283,8 @@ void GlideRenderer::setTextureData(x86::reg32 tmu, x86::reg32 address, const voi
         pf::logError("texture address 0x%x out of range, download ignored", address);
         return;
     }
-    const bool bound = address == m_textureAddress;
+    // Bound: last selected, or still drawn from after a select of an address without a texture.
+    const bool bound = address == m_textureAddress || (entry->texture && entry->texture == m_texture);
     if (bound)
         flush();
     if (entry->texture)
@@ -324,11 +325,16 @@ void GlideRenderer::writeVertex(pf::gxm::Vertex* vertex, const GrVertex* v, cons
     out[8] = word(v->oow);
 }
 
+// Triangles past the frame's vertex buffer are dropped.
 void GlideRenderer::drawTriangle(const GrVertex* a, const GrVertex* b, const GrVertex* c)
 {
     pf::gxm::Frame& f = frame();
     const x86::reg32 count = f.vertexCount;
-    NFS2_ASSERT(count + 3 <= pf::gxm::MaxVertices);
+    if (__builtin_expect(count + 3 > pf::gxm::MaxVertices, 0))
+    {
+        logDropped();
+        return;
+    }
     pf::gxm::Vertex* out = f.vertices + count;
     const VertexState state = m_vertexState;
     writeVertex(out, a, state);
@@ -342,13 +348,30 @@ GlideRenderer* GlideRenderer::active()
     return s_active;
 }
 
+// Triangles that do not fit in the frame's vertex buffer go to a scratch area and are not drawn.
 pf::gxm::Vertex* GlideRenderer::appendTriangles(x86::reg32 count)
 {
     pf::gxm::Frame& f = frame();
     const x86::reg32 first = f.vertexCount;
-    NFS2_ASSERT(first + 3 * count <= pf::gxm::MaxVertices);
-    f.vertexCount = first + 3 * count;
+    const x86::reg64 vertices = 3 * x86::reg64(count);
+    if (__builtin_expect(first + vertices > pf::gxm::MaxVertices, 0))
+    {
+        logDropped();
+        m_scratch.resize(size_t(vertices));
+        return m_scratch.data();
+    }
+    f.vertexCount = first + x86::reg32(vertices);
     return f.vertices + first;
+}
+
+void GlideRenderer::logDropped()
+{
+    static bool logged = false;
+    if (!logged)
+    {
+        logged = true;
+        pf::logError("glide: vertex buffer full (%u vertices), triangles dropped", unsigned(pf::gxm::MaxVertices));
+    }
 }
 
 }

@@ -22,6 +22,10 @@ REG_SHIFT = 8
 ALL_REG_STATE = C.ALL_REGS << REG_SHIFT
 ALL_STATE = C.ALL_FLAGS | ALL_REG_STATE
 MEMORY_DEFS = ('popfd', 'popf')     # write cpu.flags directly
+# pf and af are produced only by sahf, popf and x87 compares; these capstone flags mark instructions that set them on
+# x86 (integer arithmetic) without the generator modelling it.
+X86_SETS = {'pf': X.X86_EFLAGS_MODIFY_PF | X.X86_EFLAGS_RESET_PF | X.X86_EFLAGS_SET_PF,
+            'af': X.X86_EFLAGS_MODIFY_AF | X.X86_EFLAGS_RESET_AF | X.X86_EFLAGS_SET_AF}
 
 
 class Exit:
@@ -62,6 +66,7 @@ class Function:
         self.effects = [None] * self.n
         self.use = [0] * self.n     # state read (flags | regs << 8)
         self.kill = [0] * self.n    # state always written
+        self.unmodeled = [0] * self.n   # pf/af set on x86 but not by the generated code
         self.fused = {}             # index of fcom / fnstsw / sahf -> index of the sahf of its triple
         self.live_in = None
         self.live_out = None
@@ -180,6 +185,10 @@ class Function:
             # A partial register write merges into the register's current value: it reads it.
             self.use[i] = e.flag_use | e.flag_sync | (e.reg_use | e.reg_partial) << REG_SHIFT
             self.kill[i] = e.flag_def | e.reg_def << REG_SHIFT
+            eflags = getattr(ins, 'eflags', 0) if self.branch[i][0] != 'skip' else 0
+            for f, sets in X86_SETS.items():
+                if eflags & sets and not (e.flag_def | e.flag_maydef) & C.FLAG_BIT[f]:
+                    self.unmodeled[i] |= C.FLAG_BIT[f]
             if self.is_fused_fnstsw(i) or self.masks_condition_codes(i):
                 self.use[i] &= ~C.FLAG_BIT['fc']    # fused: read only when eax is live (see liveness)
         # A failed assertion traps: nothing runs after an instruction the generator cannot translate.
@@ -337,6 +346,23 @@ class Function:
         self._rd_cache[key] = result
         return result
 
+    def check_modeled(self, i, f):
+        """Fails when a read of pf/af at i can see a value an unmodelled producer set on x86."""
+        bit = C.FLAG_BIT[f]
+        seen = set()
+        stack = list(self.pred[i])
+        while stack:
+            p = stack.pop()
+            if p in seen:
+                continue
+            seen.add(p)
+            if self.unmodeled[p] & bit:
+                raise AssertionError('0x%x (%s) reads %s set by 0x%x (%s), which the generator does not model'
+                                     % (self.instructions[i].address, self.instructions[i].mnemonic, f,
+                                        self.instructions[p].address, self.instructions[p].mnemonic))
+            if not (self.is_call(p) or self.instructions[p].mnemonic in MEMORY_DEFS or self.effects[p].flag_def & bit):
+                stack.extend(self.pred[p])
+
     def lazy_producer(self, i, f):
         """The single lazy producer serving flag f at instruction i, or None."""
         rd = self.reaching(i, f)
@@ -380,6 +406,8 @@ class Function:
             mask = self.effects[i].flag_use & C.CPU_FLAG_MASK
             for f in C.CPU_FLAGS:
                 if mask & C.FLAG_BIT[f]:
+                    if f in X86_SETS and i in self.reachable:
+                        self.check_modeled(i, f)
                     self.need_valid(i, f)
             stores = {}
             for x in self.exits[i]:

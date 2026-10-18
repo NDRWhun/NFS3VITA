@@ -1,5 +1,5 @@
 #include "thrashdraw.h"
-#include <voodoo2a.h>
+#include "voodoo2aexport.h"
 #include <nfs3hp_layout.h>
 #include <lib/gliderenderer.h>
 #include <lib/winapp.h>
@@ -7,20 +7,17 @@
 #include <platform/log.h>
 #include <cstring>
 
-// The THRASH draw exports (voodoo2a) convert each game vertex record into a Glide GrVertex on their stack and call
-// grDrawTriangle through a pointer once per triangle; the host then turns the GrVertex into a GXM vertex. The
-// replacements produce the same GXM vertices directly:
+// The THRASH draw exports (voodoo2a) write their triangles straight into the frame's GXM vertex buffer, with the
+// vertices the original's GrVertex and grDrawTriangle path produces:
 // - record: +0 x, +4 y, +8 z, +0xc w (1/z), +0x10 B, G, R, A bytes, +0x18 u, +0x1c v;
 // - x, y through double (fld/fstp); oow = w copied;
-// - ooz = z * [DepthScale]; sow, tow = u, v * (w * [TextureScale]), the products in double like the x87
-//   code, each result rounded to float once (under the same FPSCR as the emulated x87);
-// - r, g, b, a = [ColorTable + 4 * byte], a table THRASH fills with float(i) (RVA 0x1d50): the bytes themselves.
+// - ooz = z * [DepthScale]; sow, tow = u, v * (w * [TextureScale]), products in double, each rounded to float once;
+// - r, g, b, a = [ColorTable + 4 * byte] = the bytes themselves (THRASH fills the table with float(i), RVA 0x1d50).
 // Triangles: drawtri (v0, v1, v2); drawquad and each drawquadmesh quad (v0, v1, v2), (v2, v3, v0); drawtrifan
 // (v0, vi, vi+1) for i = 1..count.
-// A replacement runs the original when THRASH routes triangles elsewhere (its multipass and antialiasing wrappers,
-// RVA 0x26e0), while the colour table is not filled, or without an open Glide window. Only guest code calls the
-// exports, through the pointer table at 0x9ef9xx (dynamic_call), under the execution lock. eax, ecx and edx (stdcall
-// scratch registers) are left unchanged and the x87 stack is untouched; the originals leave it balanced too.
+// The original runs when THRASH routes triangles elsewhere (multipass and antialiasing wrappers, RVA 0x26e0), the
+// colour table is not filled, there is no open Glide window or the count exceeds a frame. Called by guest
+// code only, under the execution lock. eax, ecx, edx and the x87 stack are left unchanged.
 
 namespace nfs3hp { namespace thrashdraw {
 
@@ -186,6 +183,11 @@ void drawFan(win32::WinApplication* app, x86::CPU& cpu)
         return;
     }
     const int32_t count = int32_t(guestWord(cpu.esp + 4));
+    if (count > int32_t(pf::gxm::MaxVertices / 3))
+    {
+        s_originalFan(app, cpu);
+        return;
+    }
     x86::reg32 record = guestWord(cpu.esp + 8);
     cpu.esp += 4 + 8;
     if (count <= 0)
@@ -213,6 +215,11 @@ void drawQuadMesh(win32::WinApplication* app, x86::CPU& cpu)
         return;
     }
     const int32_t count = int32_t(guestWord(cpu.esp + 4));
+    if (count > int32_t(pf::gxm::MaxVertices / 6))
+    {
+        s_originalQuadMesh(app, cpu);
+        return;
+    }
     const x86::reg32 records = guestWord(cpu.esp + 8);
     x86::reg32 indices = guestWord(cpu.esp + 12);
     cpu.esp += 4 + 12;
@@ -233,7 +240,7 @@ void drawQuadMesh(win32::WinApplication* app, x86::CPU& cpu)
 
 win32::MethodPtr replace(win32::WinApplication& app, const char* name, win32::MethodPtr method)
 {
-    return app.replaceMethod((*voodoo2a::s_registry)[name].first, method);
+    return app.replaceMethod(voodoo2aExport(name), method);
 }
 
 }

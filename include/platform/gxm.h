@@ -107,6 +107,7 @@ public:
     // Game thread: frames are acquired, filled, then submitted; at most FrameSlots in flight.
     // acquireFrame() waits until the render thread and the GPU are done with the next slot, so callers
     // release the execution lock around it; it returns the acquired frame again until submitFrame().
+    // These calls and the texture calls below have no lock of their own: they must never run concurrently.
     Frame& acquireFrame();
     Frame* currentFrame();
     void submitFrame();

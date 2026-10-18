@@ -1,24 +1,20 @@
 #include "videomodes.h"
+#include "voodoo2aexport.h"
 #include <lib/winapp.h>
 #include <nfs3hp_layout.h>
 #include <platform/config.h>
 #include <platform/log.h>
-#include <voodoo2a.h>
 #include <winapi/glide2x.h>
 #include <cstdio>
 
-// voodoo2a reports its Glide modes from a static table: 16 entries of 40 bytes from index 1 (width, height, bits per
-// pixel, flags, colour buffer count, aux buffer count, ...) and the Glide resolution code of each entry, which
-// THRASH_setvideomode passes to grSstWinOpen. THRASH_about recomputes the buffer counts from the frame buffer
-// memory, and gives 960-pixel-wide modes none (they need two Voodoo2 boards).
-//
-// The Modern Patch lists the modes from 5:4 to 16:9 whose flags have bit 0 set and bit 1 clear and that have buffers
-// (sub_4bee60). At start-up it picks the frontend mode nearest to 640x480 and sets it (sub_517620); then it picks the
-// race mode nearest to the one saved in config.dat (640x480 after its first-start reset, sub_448394). Offering a
-// single race mode from the first mode set on makes every race choice land on it: the 856x480 entry becomes 960x544
-// (opened by the port's grSstWinOpen for GR_RESOLUTION_960x544) and is the only mode listed, unless nfs3vita.cfg
-// names another one with resolution=WIDTHxHEIGHT. Bit 1 hides the others from the list only: voodoo2a ignores it,
-// and the frontend sets its mode by index.
+// voodoo2a's Glide mode table: 16 entries of 40 bytes from index 1 (width, height, bits per pixel, flags, colour
+// buffer count, aux buffer count, ...) plus a Glide resolution code per entry for grSstWinOpen. THRASH_about
+// recomputes the buffer counts and gives 960-pixel-wide modes none.
+// The Modern Patch lists modes from 5:4 to 16:9 with flags bit 0 set, bit 1 clear and buffers (sub_4bee60), sets the
+// frontend mode nearest to 640x480 first (sub_517620) and races in the listed mode nearest to the one in config.dat.
+// The 856x480 entry becomes 960x544 (GR_RESOLUTION_960x544) and, after the first mode set, it is the only mode listed
+// (or the one named by resolution=WIDTHxHEIGHT in nfs3vita.cfg). Bit 1 only hides a mode from the list: voodoo2a
+// ignores it and the frontend sets its mode by index.
 
 namespace nfs3hp { namespace videomodes {
 
@@ -115,9 +111,8 @@ void install(win32::WinApplication& app)
         else
             pf::logError("video modes: resolution=%s is not a Voodoo 2 mode, 960x544 used", resolution);
     }
-    s_originalAbout = app.replaceMethod((*voodoo2a::s_registry)["_THRASH_about@0"].first, &thrashAbout);
-    s_originalSetVideoMode = app.replaceMethod((*voodoo2a::s_registry)["_THRASH_setvideomode@12"].first,
-                                               &thrashSetVideoMode);
+    s_originalAbout = app.replaceMethod(voodoo2aExport("_THRASH_about@0"), &thrashAbout);
+    s_originalSetVideoMode = app.replaceMethod(voodoo2aExport("_THRASH_setvideomode@12"), &thrashSetVideoMode);
     pf::logInfo("video modes: race resolution %ux%u", x86::reg32(app.getMemory<x86::reg32>(entry(s_offered))),
                 x86::reg32(app.getMemory<x86::reg32>(entry(s_offered) + 4)));
 }

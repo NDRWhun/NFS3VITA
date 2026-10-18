@@ -30,7 +30,8 @@ BOOL IDirectDrawSurface::QueryInterface(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(refiid);
-    if (*refiid == IID_IDirectDrawSurface || *refiid == IID_IDirectDrawSurface2 || *refiid == IID_IDirectDrawSurface3)
+    if (*refiid == IID_IDirectDrawSurface || *refiid == IID_IDirectDrawSurface2 || *refiid == IID_IDirectDrawSurface3
+        || com::isUnknown(*refiid))
     {
         *pvvObject = ComGetIndex(app, this);
         m_refCount ++;
@@ -39,7 +40,6 @@ BOOL IDirectDrawSurface::QueryInterface(WinApplication* app, x86::CPU& cpu,
     else
     {
         *pvvObject = 0;
-        //m_refCount ++;
         return 0x80004002;
     }
 }
@@ -365,7 +365,6 @@ HRESULT IDirectDrawSurface::SetPalette(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(lpDDPalette);
-    //NFS2_ASSERT(false);
     return 0;
 }
 

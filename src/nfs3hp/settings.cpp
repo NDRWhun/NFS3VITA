@@ -59,15 +59,23 @@ void add(x86::reg32 address, x86::reg32 value)
 // Patches the bytes of each override word that fall inside the data read.
 void filterConfig(x86::reg32 offset, x86::reg8* data, x86::reg32 length)
 {
+    unsigned patched = 0;
     for (const Override& entry : s_overrides)
     {
+        bool hit = false;
         for (x86::reg32 i = 0; i < 4; ++i)
         {
             const x86::reg32 position = entry.offset + i;
             if (position >= offset && position < offset + length)
+            {
                 data[position - offset] = x86::reg8(entry.value >> (8 * i));
+                hit = true;
+            }
         }
+        patched += hit;
     }
+    if (patched)
+        pf::logInfo("settings: %u config.dat words replaced from nfs3vita.cfg", patched);
 }
 
 }
@@ -77,9 +85,9 @@ void install(win32::WinApplication& app)
     NFS2_USE(app);
     for (const Option& option : Options)
     {
-        if (!pf::Config::has(option.key))
+        int value = 0;
+        if (!pf::Config::tryGetInt(option.key, &value))
             continue;
-        const int value = pf::Config::getInt(option.key, 0);
         if (value < 0 || value >= option.count)
         {
             pf::logError("settings: %s=%d out of range 0..%d, ignored", option.key, value, option.count - 1);
@@ -87,9 +95,9 @@ void install(win32::WinApplication& app)
         }
         add(option.address, x86::reg32(option.inverted ? 1 - value : value));
     }
-    if (pf::Config::has("mirror"))
+    bool on = false;
+    if (pf::Config::tryGetBool("mirror", &on))
     {
-        const bool on = pf::Config::getBool("mirror", false);
         const int count = on ? SinglePlayerMirrors : int(sizeof(Mirrors) / sizeof(Mirrors[0]));
         for (int i = 0; i < count; ++i)
             add(Mirrors[i], on ? 1 : 0);
@@ -97,7 +105,6 @@ void install(win32::WinApplication& app)
     if (s_overrides.empty())
         return;
     win32::File::setReadFilter(ConfigFile, &filterConfig);
-    pf::logInfo("settings: %u config.dat words set from nfs3vita.cfg", unsigned(s_overrides.size()));
 }
 
 }}

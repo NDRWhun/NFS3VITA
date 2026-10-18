@@ -1,5 +1,6 @@
 #include <platform/ime.h>
 #include <platform/log.h>
+#include <platform/time.h>
 #include <psp2/apputil.h>
 #include <psp2/common_dialog.h>
 #include <psp2/ime_dialog.h>
@@ -20,6 +21,8 @@ enum State
     StateRunning,       // dialog shown, updated every rendered frame
     StateFinished       // s_result and s_text ready for takeResult()
 };
+
+const int ShutdownWaitMs = 500;     // longest wait for an aborted dialog at shutdown
 
 std::atomic<int>  s_state{StateIdle};
 std::atomic<bool> s_abort{false};       // requestClose() was called for the current request
@@ -250,8 +253,13 @@ void shutdown()
 {
     if (s_state.load() == StateRunning)
     {
+        // The abort completes asynchronously; the dialog can only be released once it has finished.
         sceImeDialogAbort();
-        sceImeDialogTerm();
+        for (int i = 0; i < ShutdownWaitMs && sceImeDialogGetStatus() == SCE_COMMON_DIALOG_STATUS_RUNNING; ++i)
+            sleepMs(1);
+        const int result = sceImeDialogTerm();
+        if (result < 0)
+            logError("sceImeDialogTerm failed at shutdown: 0x%08x", result);
     }
     s_state.store(StateIdle);
     if (s_configured)

@@ -83,7 +83,7 @@ def declarations(fn, body):
 
 def write_entry(out, header, module, program, fn, name, qualifier, declare, app_type, function_names):
     """Declares and writes one guest function. With a native override the translated body becomes <name>_guest,
-    and the entry calls native::<name> through NFS3_NATIVE (include/native.h), which can check it against the body."""
+    and the entry calls native::<name> through NFS3_NATIVE (include/native.h)."""
     parameters = '(%s* app, x86::CPU& cpu)' % app_type
     header.write('%svoid %s%s;\n' % (declare, name, parameters))
     if fn.entry_address in program.native_overrides:

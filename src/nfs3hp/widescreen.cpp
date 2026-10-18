@@ -1,5 +1,5 @@
 #include "widescreen.h"
-#include <voodoo2a.h>
+#include "voodoo2aexport.h"
 #include <lib/gliderenderer.h>
 #include <lib/winapp.h>
 #include <platform/gxm.h>
@@ -7,20 +7,18 @@
 #include <cmath>
 #include <cstring>
 
-// The game builds each view's projection and then calls THRASH_clip with the view's clip rectangle (sub_4bed20:
-// sub_4dbce0, then sub_4bebe0). The HUD, mirror frame, menus and other 2D phases start with a clip-only call.
-// For the race world views the hook scales the horizontal focal length by gameAreaWidth / displayWidth (the image
-// is squeezed horizontally) and maps their draws onto the whole display: the centre shows the 4:3 image unchanged
-// and the sides show more of the world (Hor+). The game culls in screen space against the clip rectangle, so the
-// wider field is culled correctly. Invariant: MapFull <=> the projection globals hold the squeezed values.
-// All state is used on the game thread under the execution lock (THRASH_clip is only called by guest code).
+// The game builds each view's projection, then calls THRASH_clip with the view's clip rectangle (sub_4bed20:
+// sub_4dbce0, then sub_4bebe0); 2D phases (HUD, mirror frame, menus) start with a clip-only call. For race world
+// views the hook scales the horizontal focal length by gameAreaWidth / displayWidth and maps their draws onto the
+// whole display (Hor+); the game culls against the clip rectangle in screen space, so the wider field is culled
+// correctly. Invariant: MapFull <=> the projection globals hold the squeezed values. Game thread, execution lock.
 
 namespace nfs3hp { namespace widescreen {
 
 namespace
 {
 
-// nfs3.exe guest addresses, see docs/WIDESCREEN.md.
+// nfs3.exe guest addresses.
 const x86::reg32 ProjectionAngle = 0x564448;    // written first by sub_4fd2b0 on every projection build, read only there
 const x86::reg32 FreshMarker     = 0x7fc0de01;  // stored there by every clip; a projection build overwrites it
 const x86::reg32 FocalX          = 0x56009c;    // float (w/2)/tan(hfov/2), sub_4bf260
@@ -199,7 +197,7 @@ void thrashClip(win32::WinApplication* app, x86::CPU& cpu)
 void install(win32::WinApplication& app)
 {
     s_scale = float(pf::gxm::Device::get().viewport().w) / float(pf::gxm::DisplayWidth);
-    const x86::reg32 clip = (*voodoo2a::s_registry)["_THRASH_clip@16"].first;
+    const x86::reg32 clip = voodoo2aExport("_THRASH_clip@16");
     s_originalClip = app.replaceMethod(clip, &thrashClip);
     pf::logInfo("widescreen: on, race world views use the whole display (focal x scale %.4f)", double(s_scale));
 }

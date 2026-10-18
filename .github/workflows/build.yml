@@ -1,5 +1,5 @@
 # The game code is generated from the user's own game binaries, which CI does not have. CI compiles the runtime
-# sources that build without it (NFS3_RUNTIME_CHECK) and checks the recompiler's Python sources.
+# sources that build without it (NFS3_RUNTIME_CHECK) and checks the recompiler on synthetic machine code.
 name: build
 
 on:
@@ -8,10 +8,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   runtime:
     runs-on: ubuntu-latest
-    container: vitasdk/vitasdk:latest
+    container: vitasdk/vitasdk:2026.08-20260925@sha256:fd82d88ff456d118eef16533ebf9a3a6ae0e292684fb8a3a35f15f0707b4692d
     steps:
       - uses: actions/checkout@v5
       - name: Tools
@@ -39,6 +42,5 @@ jobs:
         run: pip install -r tools/recompiler/requirements.txt
       - name: Compile
         run: python -m compileall -q tools/recompiler
-      - name: Import
-        working-directory: tools/recompiler
-        run: python -c "import generate"
+      - name: Tests
+        run: python -m unittest discover -s tools/recompiler/tests

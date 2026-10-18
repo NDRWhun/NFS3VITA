@@ -101,7 +101,7 @@ BOOL IDirectDraw2::QueryInterface(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(refiid);
-    if (*refiid == IID_IDirectDraw2 || *refiid == IID_IDirectDraw3)
+    if (*refiid == IID_IDirectDraw2 || *refiid == IID_IDirectDraw3 || com::isUnknown(*refiid))
     {
         *pvvObject = ComGetIndex(app, this);
         m_refCount ++;
@@ -110,7 +110,6 @@ BOOL IDirectDraw2::QueryInterface(WinApplication* app, x86::CPU& cpu,
     else
     {
         *pvvObject = 0;
-        //m_refCount ++;
         return 0x80004002;
     }
 }
@@ -219,7 +218,6 @@ HRESULT IDirectDraw2::GetCaps(WinApplication* app, x86::CPU& cpu, LPDDCAPS lpDDC
     memset(lpDDCaps, 0, lpDDCaps->dwSize);
     memset(lpDDHelCaps, 0, lpDDHelCaps->dwSize);
     lpDDCaps->dwSize = sizeof(DDCAPS);
-    //lpDDCaps->dwCaps = 0x40;
     return 0;
 }
 
@@ -286,11 +284,7 @@ HRESULT IDirectDraw2::SetCooperativeLevel(WinApplication* app, x86::CPU& cpu, HW
     NFS2_USE(cpu);
     NFS2_USE(dwFlags);
     Window* window = dynamic_cast<Window*>(app->getResource(hWNd));
-    if (!window)
-    {
-        /*TODO: delete renderer?*/
-    }
-    else
+    if (window)
     {
         m_resource = new Renderer(app, window);
         app->allocateResource(m_resource);

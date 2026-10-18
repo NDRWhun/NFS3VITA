@@ -55,12 +55,14 @@ x86::reg8* const g_guestBase = allocArena();
 
 MemMap::MemMap(x86::reg32 size)
     :   m_block(x86::reg32(-1))
-    ,   m_blockCount(0)
+    ,   m_blockCount(size / 4096 + (size % 4096 != 0))
 {
-    m_blockCount = ((size+4095) & ~4095u) / 4096;
     NFS2_ASSERT(m_blockCount >= 1);
+    if (m_blockCount > s_blockCount)
+        pf::fatal("guest memory exhausted (requested %u bytes)", size);
     s_lock->lock();
-    for (x86::reg32 b = 0; b < s_blockCount - m_blockCount; /* nothing */)
+    // First fit: after a used block the search resumes past it.
+    for (x86::reg32 b = 0; b + m_blockCount <= s_blockCount; /* nothing */)
     {
         bool success = true;
         for (x86::reg32 s = b; s < b + m_blockCount; ++s)
@@ -68,7 +70,7 @@ MemMap::MemMap(x86::reg32 size)
             if (s_blocks[s])
             {
                 success = false;
-                b = s + 2;
+                b = s + 1;
                 break;
             }
         }
@@ -106,10 +108,11 @@ MemMap::~MemMap()
     s_lock->unlock();
 }
 
+// Null for an address outside every block.
 MemMap* MemMap::findBlock(x86::reg32 memIndex)
 {
-    NFS2_ASSERT(memIndex >= s_addressOffset);
-    NFS2_ASSERT(memIndex < s_addressOffset + s_simulatedMemory);
+    if (memIndex < s_addressOffset || memIndex >= s_addressOffset + s_simulatedMemory)
+        return nullptr;
     MemMap* result = nullptr;
     s_lock->lock();
     for (std::vector<MemMap*>::iterator it = s_memMaps.begin(); it != s_memMaps.end(); ++it)

@@ -24,9 +24,10 @@ public:
     static bool setHandle(x86::reg32 handle);
     // False if no event has the handle.
     static bool isHandleSet(x86::reg32 handle);
-    // WaitForMultipleObjects: index of the signalled event (0 when waitAll), WAIT_TIMEOUT, or -1 when the thread
-    // terminates. timeout in milliseconds, negative for infinite.
-    static x86::reg32 wait(x86::CPU& cpu, Event** begin, Event** end, bool waitAll, x86::sreg32 timeout);
+    // WaitForMultipleObjects on event handles: index of the signalled event (0 when waitAll), WAIT_TIMEOUT, or
+    // WAIT_FAILED (-1) when a handle is not an event or the thread terminates. timeout in milliseconds, negative for
+    // infinite.
+    static x86::reg32 wait(x86::CPU& cpu, const x86::reg32* handles, size_t count, bool waitAll, x86::sreg32 timeout);
     // Wakes every waiting thread so it checks its terminate flag.
     static void broadcastTerminate();
 

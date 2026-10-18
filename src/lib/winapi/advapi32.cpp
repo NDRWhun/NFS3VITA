@@ -22,7 +22,7 @@ LSTATUS RegFlushKey(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(app);
     NFS2_USE(cpu);
     NFS2_USE(hKey);
-    return 1;
+    return 0;
 }
 
 LSTATUS RegOpenKeyExA(WinApplication* app, x86::CPU& cpu,
@@ -32,9 +32,10 @@ LSTATUS RegOpenKeyExA(WinApplication* app, x86::CPU& cpu,
     NFS2_USE(ulOptions);
     NFS2_USE(samDesired);
     RegistryKey* key = dynamic_cast<RegistryKey*>(app->getResource(hKey));
-    if (key)
+    if (key && phkResult)
     {
-        const char* subk = lpSubKey;
+        // A null or empty subkey opens the key itself.
+        const char* subk = lpSubKey ? lpSubKey : "";
         while (*subk)
         {
             const char* subkEnd;
@@ -64,7 +65,8 @@ LSTATUS RegQueryValueExA(WinApplication* app, x86::CPU& cpu,
     RegistryKey* key = dynamic_cast<RegistryKey*>(app->getResource(hKey));
     if (key)
     {
-        RegistryValue* value = key->getValue(lpValueName);
+        // A null name is the key's default value.
+        RegistryValue* value = key->getValue(lpValueName ? lpValueName : "");
         if (!value)
         {
             return 1;

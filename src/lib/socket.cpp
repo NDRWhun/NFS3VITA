@@ -1,7 +1,5 @@
 #include <lib/socket.h>
-//#include <winsock.h>
 #include <cstdio>
-//#include <SDL2/SDL_net.h>
 
 namespace win32
 {
@@ -34,12 +32,10 @@ x86::reg32 Socket::netToA(WinApplication* app, x86::reg32 address)
 void Socket::init()
 {
     s_netToABuffer = new MemMap(4096);
-    //SDLNet_Init();
 }
 
 void Socket::fini()
 {
-    //SDLNet_Quit();
     delete s_netToABuffer;
 }
 

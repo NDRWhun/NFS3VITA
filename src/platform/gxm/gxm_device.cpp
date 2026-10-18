@@ -61,6 +61,15 @@ uint32_t alignUp(uint32_t value, uint32_t alignment)
     return (value + alignment - 1) & ~(alignment - 1);
 }
 
+void* memBlockBase(SceUID uid)
+{
+    void* mem = nullptr;
+    const int result = sceKernelGetMemBlockBase(uid, &mem);
+    if (result < 0)
+        fatal("sceKernelGetMemBlockBase failed: 0x%08x", result);
+    return mem;
+}
+
 void* gpuAlloc(SceKernelMemBlockType type, uint32_t size, uint32_t alignment, uint32_t attribs, SceUID* uid)
 {
     const uint32_t granularity = (type == SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW) ? 256 * 1024 : 4096;
@@ -73,8 +82,7 @@ void* gpuAlloc(SceKernelMemBlockType type, uint32_t size, uint32_t alignment, ui
     *uid = sceKernelAllocMemBlock("nfs3_gpu", type, size, alignment > granularity ? &opt : nullptr);
     if (*uid < 0)
         fatal("sceKernelAllocMemBlock(%u bytes, type 0x%08x) failed: 0x%08x", size, type, *uid);
-    void* mem = nullptr;
-    sceKernelGetMemBlockBase(*uid, &mem);
+    void* mem = memBlockBase(*uid);
     int result = sceGxmMapMemory(mem, size, SceGxmMemoryAttribFlags(attribs));
     if (result < 0)
         fatal("sceGxmMapMemory failed: 0x%08x", result);
@@ -91,23 +99,18 @@ void gpuFree(SceUID uid)
     sceKernelFreeMemBlock(uid);
 }
 
-void* gpuVertexUsseAlloc(uint32_t size, SceUID* uid, unsigned int* offset)
+void* gpuUsseAlloc(uint32_t size, SceUID* uid, unsigned int* offset, bool vertex)
 {
     size = alignUp(size, 4096);
-    *uid = sceKernelAllocMemBlock("nfs3_vusse", SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, size, nullptr);
-    void* mem = nullptr;
-    sceKernelGetMemBlockBase(*uid, &mem);
-    sceGxmMapVertexUsseMemory(mem, size, offset);
-    return mem;
-}
-
-void* gpuFragmentUsseAlloc(uint32_t size, SceUID* uid, unsigned int* offset)
-{
-    size = alignUp(size, 4096);
-    *uid = sceKernelAllocMemBlock("nfs3_fusse", SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, size, nullptr);
-    void* mem = nullptr;
-    sceKernelGetMemBlockBase(*uid, &mem);
-    sceGxmMapFragmentUsseMemory(mem, size, offset);
+    *uid = sceKernelAllocMemBlock(vertex ? "nfs3_vusse" : "nfs3_fusse", SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, size,
+                                  nullptr);
+    if (*uid < 0)
+        fatal("sceKernelAllocMemBlock(%u bytes, USSE) failed: 0x%08x", size, *uid);
+    void* mem = memBlockBase(*uid);
+    const int result = vertex ? sceGxmMapVertexUsseMemory(mem, size, offset)
+                              : sceGxmMapFragmentUsseMemory(mem, size, offset);
+    if (result < 0)
+        fatal("sceGxmMap%sUsseMemory failed: 0x%08x", vertex ? "Vertex" : "Fragment", result);
     return mem;
 }
 
@@ -230,7 +233,7 @@ struct Texture
     SceGxmTexture   gxm;            // swizzled, all levels; filters and addressing are set per draw
     uint32_t        offset;         // in the texture pool
     uint32_t        bytes;
-    uint32_t        freedFrame;     // recording frame index when released
+    uint32_t        freedFrame;     // last frame that may read it (Impl::lastReadingFrameIndex)
     bool            memoryFreed;    // the pool range was reused before the frame completed
     Texture*        next;           // quarantine list
 };
@@ -287,6 +290,7 @@ struct Device::Impl
     QuadVertex*             quadVertices = nullptr;
     Rect                    quadBoxes[QuadSets] = {};
     uint32_t                quadSetCount = 0;
+    bool                    quadSetsFullLogged = false;
     SceUID                  quadVerticesUid = InvalidUid;
     uint16_t*               quadIndices = nullptr;
     SceUID                  quadIndicesUid = InvalidUid;
@@ -321,6 +325,7 @@ struct Device::Impl
     uint32_t                renderSlot = 0;
     bool                    frameAcquired = false;
     uint32_t                nextFrameIndex = 1;
+    uint32_t                lastDrawnFrameIndex = 0;    // last submitted frame that is not FrameEmpty, 0 if none
     Semaphore               freeSlots{"nfs3_gxm_free", FrameSlots, FrameSlots};
     Semaphore               readySlots{"nfs3_gxm_ready", 0, FrameSlots + 1}; // +1: shutdown wake-up
 
@@ -338,7 +343,7 @@ struct Device::Impl
     bool allocateRange(uint32_t bytes, uint32_t* offset);
     void freeRange(uint32_t offset, uint32_t bytes);
     void releaseQuarantine(bool force);
-    uint32_t recordingFrameIndex() const;
+    uint32_t lastReadingFrameIndex() const;
 
     static int threadEntry(void* self);
     void run();
@@ -384,11 +389,13 @@ bool Device::Impl::initCore()
     }
 
     hostMem = malloc(SCE_GXM_MINIMUM_CONTEXT_HOST_MEM_SIZE);
+    if (!hostMem)
+        fatal("out of memory for the GXM context");
     void* vdmRing = gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, SCE_GXM_DEFAULT_VDM_RING_BUFFER_SIZE, 4, SCE_GXM_MEMORY_ATTRIB_READ, &vdmRingUid);
     void* vertexRing = gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, SCE_GXM_DEFAULT_VERTEX_RING_BUFFER_SIZE, 4, SCE_GXM_MEMORY_ATTRIB_READ, &vertexRingUid);
     void* fragmentRing = gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, SCE_GXM_DEFAULT_FRAGMENT_RING_BUFFER_SIZE, 4, SCE_GXM_MEMORY_ATTRIB_READ, &fragmentRingUid);
     unsigned int fragmentUsseOffset = 0;
-    void* fragmentUsseRing = gpuFragmentUsseAlloc(SCE_GXM_DEFAULT_FRAGMENT_USSE_RING_BUFFER_SIZE, &fragmentUsseRingUid, &fragmentUsseOffset);
+    void* fragmentUsseRing = gpuUsseAlloc(SCE_GXM_DEFAULT_FRAGMENT_USSE_RING_BUFFER_SIZE, &fragmentUsseRingUid, &fragmentUsseOffset, false);
 
     SceGxmContextParams params;
     memset(&params, 0, sizeof(params));
@@ -480,8 +487,8 @@ bool Device::Impl::initPrograms()
 {
     void* patcherBuffer = gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_NC_RW, PatcherBufferSize, 4, SCE_GXM_MEMORY_ATTRIB_RW, &patcherBufferUid);
     unsigned int vertexUsseOffset = 0, fragmentUsseOffset = 0;
-    void* vertexUsse = gpuVertexUsseAlloc(PatcherUsseSize, &patcherVertexUsseUid, &vertexUsseOffset);
-    void* fragmentUsse = gpuFragmentUsseAlloc(PatcherUsseSize, &patcherFragmentUsseUid, &fragmentUsseOffset);
+    void* vertexUsse = gpuUsseAlloc(PatcherUsseSize, &patcherVertexUsseUid, &vertexUsseOffset, true);
+    void* fragmentUsse = gpuUsseAlloc(PatcherUsseSize, &patcherFragmentUsseUid, &fragmentUsseOffset, false);
 
     SceGxmShaderPatcherParams params;
     memset(&params, 0, sizeof(params));
@@ -665,7 +672,12 @@ uint32_t Device::Impl::quadSet(const Rect& box)
     }
     if (quadSetCount == QuadSets)
     {
-        logError("gxm: no static quad set left for a %dx%d box", box.w, box.h);
+        // Drawn with set 0 instead; logged once.
+        if (!quadSetsFullLogged)
+        {
+            logError("gxm: no static quad set left for a %dx%d box", box.w, box.h);
+            quadSetsFullLogged = true;
+        }
         return 0;
     }
     const uint32_t set = quadSetCount++;
@@ -827,7 +839,7 @@ void Device::Impl::renderFrame(Frame& frame, Slot& slot)
         SceGxmTextureFormat format = SCE_GXM_TEXTURE_FORMAT_P8_ABGR;
         if (frame.kind == FrameFramebuffer16)
             format = SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB;
-        sceGxmTextureInitLinear(&texture, frame.framebuffer, format, frame.sourceWidth, frame.sourceHeight, 1);
+        sceGxmTextureInitLinear(&texture, frame.framebuffer, format, sw, sh, 1);
         if (frame.kind == FrameFramebuffer8)
             sceGxmTextureSetPalette(&texture, frame.palette);
         sceGxmTextureSetMinFilter(&texture, SCE_GXM_TEXTURE_FILTER_LINEAR);
@@ -978,7 +990,9 @@ void Device::Impl::present(uint32_t vblanks, uint32_t frameIndex)
     data.endSceneTime = endSceneTime;
     const bool timed = frameIndex && perf::enabled();
     const uint32_t start = timed ? perf::now() : 0;
-    sceGxmDisplayQueueAddEntry(displaySync[frontBuffer], displaySync[backBuffer], &data);
+    const int result = sceGxmDisplayQueueAddEntry(displaySync[frontBuffer], displaySync[backBuffer], &data);
+    if (result < 0)
+        fatal("sceGxmDisplayQueueAddEntry failed: 0x%08x", result);
     if (timed)
         perf::add(perf::QueueWait, perf::now() - start);
     frontBuffer = backBuffer;
@@ -1006,7 +1020,10 @@ bool Device::init()
         return true;
     m_impl = new Impl();
     if (!m_impl->initCore() || !m_impl->initDisplay() || !m_impl->initPrograms() || !m_impl->initBuffers())
+    {
+        shutdown();
         return false;
+    }
 
     m_impl->texturePool = static_cast<uint8_t*>(gpuAlloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, TexturePoolBytes,
                                                          SCE_GXM_TEXTURE_ALIGNMENT, SCE_GXM_MEMORY_ATTRIB_READ,
@@ -1103,9 +1120,9 @@ Frame& Device::acquireFrame()
         if (slot.gpuPending)
         {
             const uint32_t fenceStart = timed ? perf::now() : 0;
-            int result = sceGxmNotificationWait(slot.gpuPending);
+            const int result = sceGxmNotificationWait(slot.gpuPending);
             if (result < 0)
-                logError("sceGxmNotificationWait failed: 0x%08x", result);
+                fatal("sceGxmNotificationWait failed: 0x%08x", result);
             slot.gpuPending = nullptr;
             if (timed)
                 perf::add(perf::FenceWait, perf::now() - fenceStart);
@@ -1140,6 +1157,8 @@ void Device::submitFrame()
     if (!impl.frameAcquired)
         return;
     impl.frameAcquired = false;
+    if (impl.frames[impl.acquireSlot].kind != FrameEmpty)
+        impl.lastDrawnFrameIndex = impl.frames[impl.acquireSlot].frameIndex;
     impl.acquireSlot = (impl.acquireSlot + 1) % FrameSlots;
     s_submittedFrames.fetch_add(1);
     impl.readySlots.post();
@@ -1155,9 +1174,14 @@ void Device::setStretch(bool stretch)
     s_stretch = stretch;
 }
 
-uint32_t Device::Impl::recordingFrameIndex() const
+// The last frame that may read a texture released now: the acquired frame once it has content, else the last
+// submitted one with content. Empty frames are never displayed, so a texture is not stamped with one; 0 counts as
+// completed.
+uint32_t Device::Impl::lastReadingFrameIndex() const
 {
-    return frameAcquired ? frames[acquireSlot].frameIndex : nextFrameIndex;
+    if (frameAcquired && frames[acquireSlot].kind != FrameEmpty)
+        return frames[acquireSlot].frameIndex;
+    return lastDrawnFrameIndex;
 }
 
 bool Device::Impl::allocateRange(uint32_t bytes, uint32_t* offset)
@@ -1272,7 +1296,7 @@ Texture* Device::createTexture(TextureFormat format, uint32_t size, uint32_t lev
 void Device::releaseTexture(Texture* texture)
 {
     Impl& impl = *m_impl;
-    texture->freedFrame = impl.recordingFrameIndex();
+    texture->freedFrame = impl.lastReadingFrameIndex();
     texture->next = impl.quarantine;
     impl.quarantine = texture;
 }

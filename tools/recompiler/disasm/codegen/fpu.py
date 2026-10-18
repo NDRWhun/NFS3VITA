@@ -72,7 +72,7 @@ def cg_fstp(ctx, dst):
 
 def cg_fist(ctx, dst):
     bits = dst.size * 8
-    return ctx.put(dst, '%s(%s(%s))' % (T(bits), S(bits), ctx.rndint()))
+    return ctx.put(dst, '%s(x86::fistInteger<%s>(%s))' % (T(bits), S(bits), ctx.rndint()))
 
 
 def cg_fistp(ctx, dst):
